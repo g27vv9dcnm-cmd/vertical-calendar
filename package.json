@@ -1,0 +1,16 @@
+{
+  "name": "vcal-firebase",
+  "private": true,
+  "scripts": {
+    "vendor": "esbuild tools/firebase-entry.js --bundle --format=esm --minify --target=es2020 --legal-comments=none --outfile=public/vendor/firebase-13.3.0.js",
+    "icons": "node tools/icons.js",
+    "emulators": "firebase emulators:start --project demo-vcal --config firebase.emu.json",
+    "test": "node test/t3.js && node test/t5.js",
+    "deploy": "firebase deploy"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "firebase": "13.3.0",
+    "firebase-tools": "15.36.0"
+  }
+}

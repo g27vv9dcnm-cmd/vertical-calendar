@@ -1,0 +1,11 @@
+node_modules/
+*-debug.log
+.firebase/
+.firebaserc
+emu/log.txt
+test/*.png
+test/import.json
+# 個人データは入れない
+migration/
+uploads/
+*.tar

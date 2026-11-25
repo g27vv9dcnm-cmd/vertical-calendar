@@ -1,0 +1,17 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ログインした本人だけが、自分の場所（users/自分のID/…）を読み書きできる。
+    // 使えるGoogleアカウントは下の一覧のメールアドレスだけ（ほかの人に使われて料金がかからないように）。
+    // アカウントを足すときは、一覧に足して storage.rules も同じように直し、もう一度公開する。
+    function isOwner(uid) {
+      return request.auth != null
+        && request.auth.uid == uid
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in ["owner@example.com"];
+    }
+    match /users/{uid}/{document=**} {
+      allow read, write: if isOwner(uid);
+    }
+  }
+}

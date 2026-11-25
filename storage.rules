@@ -1,0 +1,19 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // 写真は users/自分のID/photos/… に置く。本人（firestore.rules と同じ一覧のアカウント）だけが使える
+    function isOwner(uid) {
+      return request.auth != null
+        && request.auth.uid == uid
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() in ["your-email@example.com"];
+    }
+    match /users/{uid}/photos/{photoId} {
+      allow read, delete: if isOwner(uid);
+      // 画像だけ、1枚10MBまで（アプリは縮小してから送るので、ふつうは1MB未満）
+      allow create, update: if isOwner(uid)
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+  }
+}

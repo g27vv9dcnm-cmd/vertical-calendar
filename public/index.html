@@ -1,0 +1,1810 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>縦型カレンダー&amp;簡単メモ</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="theme-color" content="#1e262b">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="カレンダー">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<!-- 土台のスタイル：このアプリを作ったClaudeのページと同じ見え方にそろえる -->
+<style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script>
+/* Firebase Hosting：web.app で開いたときは同じサイトの firebaseapp.com に移る（Googleログインをこのサイトの中で完結させるため） */
+if (/\.web\.app$/.test(location.hostname)) location.replace(location.href.replace(/^https:\/\/([^/]+)\.web\.app/, "https://$1.firebaseapp.com"));
+/* 画面の色：light（白・最初はこれ）／dark（黒）／auto（携帯の設定に合わせる）。この端末に覚えておく */
+(() => {
+  let t = "light";
+  try { const v = localStorage.getItem("vcal.theme"); if (v === "dark" || v === "auto") t = v; } catch (_) {}
+  window.__vcalTheme = t;
+  if (t !== "auto") document.documentElement.dataset.theme = t;
+  // Claude アプリの中では、ページが 320px 幅で描かれて画面いっぱいに拡大される（文字も行も約1.2倍）。
+  // そのときだけカレンダーを同じ割合で縮めて、ふつうの大きさで見せる（入力画面はそのまま）
+  try {
+    const sw = Math.min(screen.width, screen.height), z = innerWidth / sw;
+    if (matchMedia("(pointer: coarse)").matches && innerWidth < 375 && z < 0.95 && z > 0.5) {
+      document.documentElement.classList.add("vz");
+      document.documentElement.style.setProperty("--vz", z.toFixed(4));
+    }
+  } catch (_) {}
+})();
+</script>
+<style>
+/* Layout: same look as the user's original calendar app. A dark title bar (icon, title, menu),
+   a white month row with big dark < > buttons, then one row per day: "4 (水)" | memo (up to 3 lines) | badges.
+   Saturdays are blue, Sundays and holidays red, today's row is pale yellow, empty days show "---",
+   and past days fade back. */
+:root {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --fg: #000000;
+  --muted: #6f7579;
+  --line: #e7e7e8;
+  --line-strong: #c4c8ca;
+  --field: #f2f3f4;
+  --accent: #22292c;
+  --accent-fg: #ffffff;
+  --accent-soft: #e8ebec;
+  --sun: #ff0000;
+  --sat: #0000ff;
+  --danger: #d0281e;
+  --scrim: rgba(14, 18, 20, .5);
+  --shadow: 0 10px 30px rgba(20, 26, 30, .16);
+  /* 上の帯・＜＞ボタン・今日の行・空いている日の「---」 */
+  --bar: #1e262b;
+  --bar-fg: #ffffff;
+  --navbtn: #22292c;
+  --navbtn-fg: #ffffff;
+  --navline: #aaaaaa;
+  --today-bg: #ffffd6;
+  --dash: #7f7f7f;
+  /* 色ラベル（色ボタンとカレンダーの印）。--lbl-on は選んだ丸の中のチェックの色 */
+  --lbl-yellow: #e3a600;
+  --lbl-blue: #3b78d8;
+  --lbl-green: #2e9e6a;
+  --lbl-red: #e05441;
+  --lbl-gray: #5f6864;
+  --lbl-on: #ffffff;
+  --lbl-on-yellow: #1c2421;
+  --font: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", system-ui, sans-serif;
+  --font-num: var(--font);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131719; --surface: #1b2023; --fg: #eceff1; --muted: #8d969b; --line: #2a3034; --line-strong: #444c51;
+    --field: #232a2e; --accent: #d3dbdf; --accent-fg: #131719; --accent-soft: #2c3438;
+    --sun: #ff6f66; --sat: #8aa2ff; --danger: #ff6f66;
+    --scrim: rgba(0, 0, 0, .62); --shadow: 0 10px 30px rgba(0, 0, 0, .5);
+    --bar: #1e262b; --bar-fg: #ffffff; --navbtn: #323b40; --navbtn-fg: #ffffff; --navline: #3d464b; --today-bg: #34331d; --dash: #6c7479;
+    --lbl-yellow: #f0c23a; --lbl-blue: #6f9ff2; --lbl-green: #4dbb8b; --lbl-red: #f2705e; --lbl-gray: #9aa49f; --lbl-on: #131816;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131719; --surface: #1b2023; --fg: #eceff1; --muted: #8d969b; --line: #2a3034; --line-strong: #444c51;
+  --field: #232a2e; --accent: #d3dbdf; --accent-fg: #131719; --accent-soft: #2c3438;
+  --sun: #ff6f66; --sat: #8aa2ff; --danger: #ff6f66;
+  --scrim: rgba(0, 0, 0, .62); --shadow: 0 10px 30px rgba(0, 0, 0, .5);
+  --bar: #1e262b; --bar-fg: #ffffff; --navbtn: #323b40; --navbtn-fg: #ffffff; --navline: #3d464b; --today-bg: #34331d; --dash: #6c7479;
+  --lbl-yellow: #f0c23a; --lbl-blue: #6f9ff2; --lbl-green: #4dbb8b; --lbl-red: #f2705e; --lbl-gray: #9aa49f; --lbl-on: #131816;
+  color-scheme: dark;
+}
+:root[data-theme="light"] { color-scheme: light; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 16px; -webkit-tap-highlight-color: transparent; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bar); }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gutter { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+/* Header: dark title bar (calendar icon | title | menu), then the month row (< | 2026年11月 | >).
+   The やること tab shows only the title bar. */
+.appbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 6; background: var(--bg); color: var(--fg); border-bottom: 1px solid var(--navline); }
+.tbar { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; column-gap: 8px; height: 60px; background: var(--bar); color: var(--bar-fg); }
+.tbar .tbar-icon { width: 28px; height: 28px; justify-self: start; }
+.appbar h1 { margin: 0; text-align: center; font-size: 21px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tbar #menuBtn { justify-self: end; width: 44px; height: 44px; border-radius: 10px; margin-right: -6px; }
+.tbar #menuBtn:active { background: rgba(255, 255, 255, .12); }
+.tbar #menuBtn svg { width: 30px; height: 30px; }
+.iconbtn { width: 40px; height: 40px; flex: none; display: grid; place-items: center; background: none; border: 0; color: inherit; border-radius: 50%; padding: 0; }
+.iconbtn:active { background: var(--field); }
+.iconbtn svg { width: 22px; height: 22px; }
+.monthnav { display: grid; grid-template-columns: minmax(64px, 100px) minmax(0, 1fr) minmax(64px, 100px); align-items: center; column-gap: 8px; height: 61px; padding-inline: max(10px, env(safe-area-inset-left, 0px)) max(10px, env(safe-area-inset-right, 0px)); }
+.monthnav[hidden] { display: none; }
+.monthnav h2 { margin: 0; text-align: center; font-size: 22px; font-weight: 700; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.navbtn { height: 41px; border: 0; border-radius: 6px; background: var(--navbtn); color: var(--navbtn-fg); font-size: 22px; line-height: 1; padding: 0; }
+.navbtn:active { opacity: .8; }
+@media (max-width: 374px) { .tbar { grid-template-columns: 36px minmax(0, 1fr) 36px; column-gap: 4px; } .appbar h1 { font-size: 16px; letter-spacing: 0; } .monthnav { grid-template-columns: 76px minmax(0, 1fr) 76px; } .monthnav h2 { font-size: 19px; } }
+
+/* Day rows: "4 (水)" | memo | badges. The memo shows up to 3 lines; the rest is cut with "…". */
+.days { list-style: none; margin: 0; padding: 0; }
+.day { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: start; column-gap: 22px; padding-block: 9px; padding-left: max(8px, env(safe-area-inset-left, 0px)); border-bottom: 1px solid var(--line); background: var(--bg); cursor: pointer; }
+.day.is-today { background: var(--today-bg); }
+.day:active { background: var(--field); }
+.date { display: flex; align-items: center; justify-content: space-between; height: 22.4px; }
+.day .num { width: 26px; flex: none; text-align: center; font-size: 17px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.day .wk { font-size: 15px; font-weight: 400; line-height: 1; white-space: nowrap; }
+.day.sun .num, .day.sun .wk, .day.hol .num, .day.hol .wk { color: var(--sun); }
+.day.sat .num, .day.sat .wk { color: var(--sat); }
+.day .body { min-width: 0; display: flex; align-items: flex-start; gap: 8px; }
+.day .dot { flex: none; width: 9px; height: 9px; margin-top: 6.7px; border-radius: 50%; background: var(--c); }
+.day .memo { min-width: 0; font-size: 16px; line-height: 1.4; white-space: pre-line; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+.day .memo.empty { color: var(--dash); letter-spacing: .12em; }
+.day .holname { flex: none; margin-left: auto; font-size: .7rem; font-weight: 700; line-height: 22.4px; color: var(--sun); letter-spacing: .04em; white-space: nowrap; }
+/* Past days fade back so today and what's ahead stand out. */
+.day.is-past .date, .day.is-past .body, .day.is-past .extras { opacity: .55; }
+.extras { display: flex; align-items: center; gap: 6px; margin-top: -3px; }
+.thumbs { display: flex; gap: 3px; align-items: center; }
+.thumbs img { width: 30px; height: 30px; object-fit: cover; border-radius: 8px; display: block; background: var(--field); }
+.thumbs .more { font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.chip { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; border-radius: 14px; background: none; border: 1.5px solid var(--accent); color: var(--accent); font-size: .78rem; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.chip svg { width: 14px; height: 14px; }
+.chip.map { background: none; border: 1.5px solid var(--accent); color: var(--accent); }
+.chip.map.compact { width: 30px; height: 28px; padding: 0; justify-content: center; }
+.chip.map.compact span { display: none; }
+/* くわしいメモがある日の印（行の右側と、かんたん入力の下の一覧） */
+.notemark { display: inline-grid; place-items: center; flex: none; width: 26px; height: 24px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); }
+.notemark svg { width: 14px; height: 14px; }
+
+.status { font-size: .75rem; color: var(--muted); text-align: center; padding-block: 16px 24px; }
+/* 拡大表示されているときは、カレンダーの部分だけ元の大きさに縮める（狭い画面用の詰めた見た目も使わない） */
+html.vz .appbar, html.vz .days, html.vz .status, html.vz #todoView, html.vz .tabbar, html.vz .menu { zoom: var(--vz); }
+html.vz .tbar { grid-template-columns: 44px minmax(0, 1fr) 44px; column-gap: 8px; }
+html.vz .appbar h1 { font-size: 21px; letter-spacing: .02em; }
+html.vz .monthnav { grid-template-columns: minmax(64px, 100px) minmax(0, 1fr) minmax(64px, 100px); }
+html.vz .monthnav h2 { font-size: 22px; }
+/* 入力画面を開いている間は、後ろのカレンダーを隠す（キーボードが出る途中に入力画面の下から見えないように） */
+body.is-editing .appbar, body.is-editing .days, body.is-editing .status, body.is-editing #todoView, body.is-editing .tabbar { visibility: hidden; }
+
+/* Menu */
+.menu { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 56px); right: max(8px, env(safe-area-inset-right, 0px)); z-index: 20; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); min-width: 220px; padding: 6px; }
+.menu button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 12px 12px; border-radius: 9px; }
+.menu button:hover { background: var(--field); }
+.menu .themes { padding: 8px 12px 10px; border-top: 1px solid var(--line); margin-top: 4px; }
+.menu .themes .lbl { display: block; font-size: .75rem; color: var(--muted); margin-bottom: 6px; }
+.menu .seg { display: grid; grid-template-columns: 1fr 1fr 1.6fr; gap: 4px; background: var(--field); border-radius: 10px; padding: 3px; }
+.menu .seg button { width: auto; text-align: center; padding: 8px 4px; border-radius: 8px; font-size: .85rem; white-space: nowrap; color: var(--muted); }
+.menu .seg button:hover { background: none; }
+.menu .seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); font-weight: 700; box-shadow: 0 1px 3px rgba(0, 0, 0, .18); }
+.menu .note { font-size: .75rem; color: var(--muted); padding: 8px 12px 6px; border-top: 1px solid var(--line); margin-top: 4px; line-height: 1.5; }
+
+/* Editor: full-screen page */
+.scrim { position: fixed; inset: 0; z-index: 30; background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.sheet-head { position: sticky; top: 0; z-index: 2; background: var(--bg); color: var(--fg); padding-top: env(safe-area-inset-top, 0px); border-bottom: 1px solid var(--line); }
+/* 見出し：‹ ｜ 日付（左右の幅をそろえて中央に置く） ｜ かんたん⇄くわしく */
+.sheet-head-in { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; column-gap: 6px; min-height: 44px; }
+.sheet-head .iconbtn { width: 40px; height: 40px; justify-self: start; }
+.sheet-head .iconbtn svg { width: 22px; height: 22px; }
+.sheet-head h3 { margin: 0; padding-block: 4px; font-size: .95rem; min-width: 0; text-align: center; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.sheet-head h3 .hn { display: inline; margin-left: 6px; font-size: .72rem; color: var(--sun); font-weight: 700; white-space: nowrap; }
+.sheet-head .chip { position: relative; justify-self: end; height: 34px; padding: 0 12px; border-radius: 17px; gap: 5px; letter-spacing: .06em; }
+/* 押せる範囲は見出しの高さ（44px）まで広げる */
+.sheet-head .chip::after { content: ""; position: absolute; inset: -6.5px 0; }
+.sheet { width: 100%; max-width: 640px; margin: 0 auto; padding-block: 4px calc(110px + env(safe-area-inset-bottom, 0px)); }
+/* 入力中はキーボードの分だけ下に余白を足して、いちばん下の欄までスクロールできるようにする */
+.scrim:focus-within .sheet { padding-bottom: calc(110px + 50vh); }
+.field textarea { width: 100%; min-height: 9.5em; border: 1px solid var(--line); background: var(--surface); border-radius: 14px; padding: 12px 14px; font-size: 17px; line-height: 1.7; resize: none; overflow: hidden; }
+.field textarea:focus { border-color: var(--accent); outline: none; }
+.fab { position: fixed; z-index: 35; right: max(18px, env(safe-area-inset-right, 0px)); bottom: calc(22px + env(safe-area-inset-bottom, 0px)); width: 60px; height: 60px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; box-shadow: var(--shadow); }
+.fab svg { width: 30px; height: 30px; }
+.fab:disabled { opacity: .5; }
+.btn { height: 40px; padding: 0 16px; white-space: nowrap; flex-shrink: 0; border-radius: 20px; border: 1px solid var(--line); background: var(--field); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; font-weight: 700; }
+.btn.danger { color: var(--danger); }
+.btn:disabled { opacity: .5; }
+.field { display: grid; gap: 6px; margin-top: 16px; }
+.field label, .field .lbl { font-size: .78rem; color: var(--muted); font-weight: 700; letter-spacing: .06em; }
+.field input[type="text"], .field input[type="url"] { width: 100%; height: 46px; border: 1px solid var(--line); background: var(--field); border-radius: 12px; padding: 0 12px; font-size: 16px; }
+.field input[type="text"]:focus, .field input[type="url"]:focus { border-color: var(--accent); background: var(--surface); outline: none; }
+.linkrow { display: flex; gap: 8px; align-items: center; }
+.linkrow input { flex: 1; min-width: 0; }
+.found { display: flex; flex-wrap: wrap; gap: 6px; }
+.found a { font-size: .8rem; color: var(--accent); word-break: break-all; }
+.photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.ph { position: relative; aspect-ratio: 1; max-width: 100%; border-radius: 12px; overflow: hidden; background: var(--field); border: 0; padding: 0; }
+.ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ph .badge { position: absolute; left: 4px; bottom: 4px; background: var(--accent); color: var(--accent-fg); font-size: .68rem; font-weight: 700; padding: 2px 6px; border-radius: 10px; }
+.ph .busy { position: absolute; inset: 0; display: grid; place-items: center; background: var(--scrim); color: #fff; font-size: .75rem; }
+.add { aspect-ratio: 1; border: 2px dashed var(--line-strong); border-radius: 12px; display: grid; place-items: center; align-content: center; gap: 4px; color: var(--muted); font-size: .78rem; background: none; }
+.add svg { width: 26px; height: 26px; }
+.hint { font-size: .75rem; color: var(--muted); line-height: 1.6; margin: 8px 0 0; }
+.err { font-size: .8rem; color: var(--danger); margin: 8px 0 0; }
+
+/* かんたん入力（色とメモだけ）／くわしく入力（すべての欄）。同じ入力欄を見せ分ける */
+.scrim.is-quick .only-detail, .scrim:not(.is-quick) .only-quick { display: none; }
+/* かんたん入力では、メモが短くてもメモ欄を画面の残りいっぱいに広げる（長いときはこれまでどおり伸びてページごとスクロール） */
+.scrim.is-quick .sheet-page { min-height: 100%; display: flex; flex-direction: column; }
+/* 入力中は .sheet の下に余白が足されるので、その分ページも伸ばしてメモ欄の大きさは変えない */
+.scrim.is-quick:focus-within .sheet-page { min-height: calc(100% + 50vh - env(safe-area-inset-bottom, 0px)); }
+.scrim.is-quick .sheet { flex: 1 0 auto; display: flex; flex-direction: column; }
+.scrim.is-quick .memofield { flex: 1 0 auto; display: flex; flex-direction: column; margin-top: 12px; }
+.scrim.is-quick .memofield label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+/* キーボードで見える高さが減ったら、メモ欄は文章の高さ（最低2行）まで縮んで下の一覧を✓より上に残す */
+.scrim.is-quick #edMemo { flex: 1 0 auto; min-height: 0; }
+
+/* 色ラベル：押せる範囲は44px、見える丸は32px。選んだ色は外側の輪とチェックで示す */
+.colorfield { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.colors { display: flex; gap: 2px; margin-inline: -6px; }
+.sw { width: 44px; height: 44px; flex: none; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; --on: var(--lbl-on); }
+.sw::before, .sw::after { content: ""; grid-area: 1 / 1; }
+.sw::before { width: 32px; height: 32px; border-radius: 50%; background: var(--c); }
+.sw[aria-checked="true"]::before { box-shadow: 0 0 0 2.5px var(--bg), 0 0 0 4.5px var(--fg); }
+.sw[aria-checked="true"]::after { width: 12px; height: 6px; border: solid var(--on); border-width: 0 0 2.5px 2.5px; transform: translateY(-1.5px) rotate(-45deg); }
+.sw.none::before { background: var(--surface); border: 1.5px solid var(--line-strong); }
+.sw.none::after { width: 18px; height: 1.5px; border: 0; border-radius: 1px; background: var(--line-strong); transform: rotate(-45deg); }
+[data-color="yellow"] { --c: var(--lbl-yellow); --on: var(--lbl-on-yellow); }
+[data-color="blue"] { --c: var(--lbl-blue); }
+[data-color="green"] { --c: var(--lbl-green); }
+[data-color="red"] { --c: var(--lbl-red); }
+[data-color="gray"] { --c: var(--lbl-gray); }
+
+/* かんたん入力の下の一覧（場所・持ち物・リンク・写真）。押すとくわしく入力へ */
+.sum { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; margin-top: 16px; padding: 0 14px 0 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--muted); font-size: .85rem; text-align: left; }
+.sum > span { display: inline-flex; align-items: center; gap: 4px; flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sum svg { width: 16px; height: 16px; flex: none; color: var(--accent); }
+.sum .place { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.sum .place span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sum .more { margin-left: auto; color: var(--accent); font-weight: 700; }
+.sum:active { background: var(--field); }
+/* 狭い画面では「リンク」を印だけにして、場所の名前を読めるようにする */
+@media (max-width: 359px) { .sum .link span { display: none; } }
+/* それでも一覧が✓と重なる高さに来るとき（長いメモ・とても低い画面）は、一覧を✓の左までにする（「リンク」は印だけ、「くわしく ›」は › だけ） */
+.scrim.is-quick.is-short .sum { width: calc(100% - 66px); }
+.scrim.is-quick.is-short .sum .link span, .scrim.is-quick.is-short .sum .more span { display: none; }
+
+/* Photo viewer (always dark, like a photo app) */
+.viewer { position: fixed; inset: 0; z-index: 40; background: #000; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; color: #fff; }
+.viewer .top, .viewer .bottom { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding-block: calc(8px + env(safe-area-inset-top, 0px)) 8px; }
+.viewer .bottom { padding-block: 10px calc(12px + env(safe-area-inset-bottom, 0px)); flex-wrap: wrap; justify-content: center; }
+.viewer .stage { display: grid; place-items: center; overflow: auto; }
+.viewer .stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.viewer .btn { background: #262c2a; border-color: #39413e; color: #fff; }
+.viewer .btn.danger { color: #ff8a80; }
+.viewer .qrtext { width: 100%; text-align: center; font-size: .8rem; color: #c8d0cc; word-break: break-all; }
+.viewer a.btn { display: inline-flex; align-items: center; text-decoration: none; background: var(--accent); color: var(--accent-fg); border-color: transparent; font-weight: 700; }
+
+/* 持ち物 */
+.pack { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 8px; border-radius: 13px; background: var(--accent-soft); color: var(--accent); font-size: .75rem; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pack svg { width: 14px; height: 14px; }
+.pack.all { background: none; border: 1px solid var(--line); color: var(--muted); font-weight: 500; }
+.items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.items:empty { display: none; }
+.items li { display: flex; align-items: center; gap: 10px; min-height: 44px; padding-left: 4px; border-bottom: 1px solid var(--line); }
+.items .it { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.items li.done .it { color: var(--muted); text-decoration: line-through; }
+
+/* Bottom switch: カレンダー｜やること */
+body { padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
+.tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; display: grid; grid-template-columns: 1fr 1fr; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); }
+.tabbar button { height: 62px; background: none; border: 0; display: grid; justify-items: center; align-content: center; gap: 3px; color: var(--muted); font-size: .72rem; font-weight: 500; }
+.tabbar svg { width: 56px; height: 30px; padding: 3px 16px; border-radius: 15px; }
+.tabbar button[aria-selected="true"] { color: var(--accent); font-weight: 700; }
+.tabbar button[aria-selected="true"] svg { background: var(--accent-soft); }
+.tabbar .lbl { display: inline-flex; align-items: center; gap: 4px; }
+.tabbar .n { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--accent-fg); font-size: .68rem; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.tabbar .n:empty { display: none; }
+
+/* やること画面 */
+.td { max-width: 640px; margin: 0 auto; padding-block: 8px 8px; display: flex; flex-direction: column; gap: 16px; }
+.td-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.td-head p { margin: 0; color: var(--muted); font-size: .9rem; }
+.td-count { color: var(--muted); font-size: .9rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.td-count b { font-family: var(--font-num); font-size: 2rem; line-height: 1; color: var(--accent); margin-right: 3px; }
+.td-add { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 16px; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.td-add:focus-within { border-color: var(--accent); }
+.td-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.td-add input[type="text"] { flex: 1; min-width: 0; height: 44px; border: 0; background: transparent; padding: 0 6px; font-size: 16px; outline: none; }
+.td-add input[type="text"]::placeholder { color: var(--muted); }
+.td-chip { height: 32px; padding: 0 12px; border-radius: 16px; border: 1px solid var(--line); background: var(--field); color: var(--muted); font-size: .85rem; }
+.td-chip[aria-pressed="true"] { background: var(--accent); border-color: transparent; color: var(--accent-fg); font-weight: 700; }
+.td-add input[type="date"] { height: 32px; border: 1px solid var(--line); background: var(--field); border-radius: 16px; padding: 0 10px; font-size: .85rem; max-width: 160px; }
+.td-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.td-tabs button { background: none; border: 0; color: var(--muted); padding: 8px 12px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.td-tabs button[aria-selected="true"] { color: var(--fg); font-weight: 700; border-color: var(--accent); }
+.td-tabs span { font-size: .8rem; margin-left: 4px; font-variant-numeric: tabular-nums; }
+.td-group { display: flex; flex-direction: column; gap: 6px; }
+.td-group + .td-group { margin-top: 10px; }
+.td-group h3 { margin: 0 2px; font-size: .78rem; font-weight: 700; letter-spacing: .08em; color: var(--muted); }
+.td-group h3.late { color: var(--danger); }
+.td-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.td-item { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 4px 6px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.td-item.late { border-color: var(--danger); }
+.td-check { appearance: none; -webkit-appearance: none; width: 24px; height: 24px; flex: none; margin: 0; border: 2px solid var(--line-strong); border-radius: 50%; display: grid; place-content: center; background: var(--surface); }
+.td-check:checked { background: var(--accent); border-color: var(--accent); }
+.td-check:checked::after { content: ""; width: 10px; height: 5px; border: 2px solid var(--accent-fg); border-top: 0; border-right: 0; transform: rotate(-45deg) translate(1px, -1px); }
+.td-text { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.4; }
+.td-item.done .td-text { color: var(--muted); text-decoration: line-through; }
+.td-due { font-size: .78rem; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.td-item.late .td-due { color: var(--danger); font-weight: 700; }
+.td-del { width: 40px; height: 40px; flex: none; background: none; border: 0; border-radius: 10px; color: var(--muted); font-size: 1.3rem; line-height: 1; }
+.td-del:active { color: var(--danger); background: var(--field); }
+.td-empty { text-align: center; color: var(--muted); padding: 32px 12px; border: 1px dashed var(--line-strong); border-radius: 16px; line-height: 1.6; }
+.td-empty strong { display: block; color: var(--fg); margin-bottom: 4px; }
+.td-clear { align-self: flex-end; background: none; border: 0; color: var(--muted); font-size: .85rem; text-decoration: underline; padding: 8px 0; }
+.td-clear.armed { color: var(--danger); }
+.td .status { padding-block: 4px 8px; }
+.td-toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 25; background: var(--fg); color: var(--bg); padding: 10px 14px; border-radius: 14px; display: flex; gap: 14px; align-items: center; font-size: .9rem; width: max-content; max-width: calc(100% - 32px); box-shadow: var(--shadow); }
+.td-toast button { background: none; border: 0; color: inherit; font-weight: 700; text-decoration: underline; flex: none; }
+
+/* ログイン画面（Firebaseに保存するとき） */
+.login { position: fixed; inset: 0; z-index: 50; overflow-y: auto; background: var(--bg); color: var(--fg); display: grid; place-items: center; padding: calc(24px + env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-right, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)) max(24px, env(safe-area-inset-left, 0px)); }
+.login-in { width: 100%; max-width: 360px; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+.login-in .logo { width: 72px; height: 72px; border-radius: 18px; background: var(--bar); color: var(--bar-fg); display: grid; place-items: center; }
+.login-in .logo svg { width: 40px; height: 40px; }
+.login-in h2 { margin: 6px 0 0; font-size: 1.25rem; }
+.login-in p { margin: 0; color: var(--muted); font-size: .9rem; line-height: 1.6; }
+.login-in .btn { width: 100%; height: 50px; border-radius: 25px; font-size: 1rem; margin-top: 8px; }
+.login-in .err { margin: 0; color: var(--danger); }
+.login-in .btn.ghost { margin-top: 0; background: none; }
+.menu .demo { font-size: .75rem; color: var(--fg); background: var(--today-bg); padding: 8px 12px; border-radius: 9px; margin: 4px 0 0; line-height: 1.5; }
+.menu .acct { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 2px; }
+.menu .acct .who { font-size: .75rem; color: var(--muted); padding: 8px 12px 2px; line-height: 1.5; overflow-wrap: anywhere; }
+.menu .acct button.armed { color: var(--danger); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .scrim { animation: rise .16s ease-out; }
+  .days { animation: fade .18s ease-out; }
+  @keyframes rise { from { transform: translateX(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+  @keyframes fade { from { opacity: .4; } to { opacity: 1; } }
+}
+</style>
+</head>
+<body>
+
+<header class="appbar">
+  <div class="tbar gutter">
+    <svg class="tbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4" stroke-linecap="round"/></svg>
+    <h1 id="appTitle">縦型カレンダー&amp;簡単メモ</h1>
+    <button class="iconbtn" id="menuBtn" aria-label="メニュー" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M3.5 6h17M3.5 12h17M3.5 18h17"/></svg>
+    </button>
+  </div>
+  <nav class="monthnav" aria-label="月の切り替え">
+    <button class="navbtn" id="prevBtn" aria-label="前の月">&lt;</button>
+    <h2 id="monthLabel" aria-live="polite">2026年11月</h2>
+    <button class="navbtn" id="nextBtn" aria-label="次の月">&gt;</button>
+  </nav>
+</header>
+
+<ul class="days" id="days"></ul>
+<p class="status gutter" id="status">読み込み中…</p>
+
+<section class="td gutter" id="todoView" hidden aria-label="やること">
+  <div class="td-head">
+    <p id="tdToday"></p>
+    <div class="td-count"><b id="tdCount">0</b>件 残り</div>
+  </div>
+  <form class="td-add" id="tdForm" autocomplete="off">
+    <div class="td-row">
+      <input type="text" id="tdText" placeholder="やることを入力…" maxlength="200" aria-label="やること" enterkeyhint="done">
+      <button class="btn primary" id="tdAddBtn" type="submit" disabled>追加</button>
+    </div>
+    <div class="td-row" role="group" aria-label="期限">
+      <button type="button" class="td-chip" data-due="" aria-pressed="true">期限なし</button>
+      <button type="button" class="td-chip" data-due="today" aria-pressed="false">今日</button>
+      <button type="button" class="td-chip" data-due="tomorrow" aria-pressed="false">明日</button>
+      <input type="date" id="tdDate" aria-label="日付を選ぶ">
+    </div>
+  </form>
+  <div class="td-tabs" role="tablist">
+    <button type="button" role="tab" id="tdTabOpen" aria-selected="true">未完了<span id="tdNOpen">0</span></button>
+    <button type="button" role="tab" id="tdTabDone" aria-selected="false">完了<span id="tdNDone">0</span></button>
+  </div>
+  <div id="tdList"></div>
+  <button type="button" class="td-clear" id="tdClearDone" hidden>完了したものをすべて削除</button>
+  <p class="status" id="tdNote">読み込み中…</p>
+</section>
+<div class="td-toast" id="tdToast" role="status" hidden><span id="tdToastMsg"></span><button type="button" id="tdUndo">元に戻す</button></div>
+
+<nav class="tabbar" role="tablist" aria-label="画面の切り替え">
+  <button type="button" role="tab" id="tabCal" aria-selected="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/></svg>
+    <span class="lbl">カレンダー</span>
+  </button>
+  <button type="button" role="tab" id="tabTodo" aria-selected="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5l1.8 1.8L9 5M4 13.5l1.8 1.8L9 12M12.5 7h7.5M12.5 14h7.5M4 19.5h16"/></svg>
+    <span class="lbl">やること<span class="n" id="tabTodoN"></span></span>
+  </button>
+</nav>
+
+<div class="menu" id="menu" hidden>
+  <button id="mToday">今月に戻る</button>
+  <button id="mJump">来月へ</button>
+  <div class="themes" role="group" aria-labelledby="mThemeLbl">
+    <span class="lbl" id="mThemeLbl">画面の色</span>
+    <div class="seg">
+      <button type="button" data-theme-pick="light" aria-pressed="false">白</button>
+      <button type="button" data-theme-pick="dark" aria-pressed="false">黒</button>
+      <button type="button" data-theme-pick="auto" aria-pressed="false">携帯に合わせる</button>
+    </div>
+  </div>
+  <div class="acct" id="mAcct" hidden>
+    <div class="who" id="mUser"></div>
+    <button id="mImport">データを取り込む</button>
+    <button id="mLogout">ログアウト</button>
+    <input type="file" id="importFile" accept="application/json,.json" hidden>
+  </div>
+  <div id="mDemo" hidden>
+    <p class="demo">デモです。予定はすべて見本で、変更はこのブラウザの中だけに保存されます。</p>
+    <button id="mDemoReset">見本の予定に戻す</button>
+  </div>
+  <div class="note" id="mNote"></div>
+</div>
+
+<div class="scrim" id="editor" role="dialog" aria-modal="true" aria-labelledby="edTitle" hidden>
+  <div class="sheet-page">
+    <div class="sheet-head">
+      <div class="sheet-head-in gutter">
+        <button class="iconbtn" id="edBack" aria-label="保存して戻る">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <h3 id="edTitle"></h3>
+        <button type="button" class="chip" id="edMode"></button>
+      </div>
+    </div>
+    <button class="fab" id="edSave" aria-label="保存">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+    </button>
+    <div class="sheet gutter">
+      <div class="field colorfield">
+        <span class="lbl only-detail" aria-hidden="true">色</span>
+        <div class="colors" id="edColors" role="radiogroup" aria-label="色"></div>
+      </div>
+      <!-- かんたんメモ：かんたん入力だけに出す。カレンダーの行に出るのはこちら -->
+      <div class="field memofield only-quick">
+        <label for="edMemo">かんたんメモ</label>
+        <textarea id="edMemo" autocomplete="off" placeholder="予定やメモを入力"></textarea>
+        <div class="found" id="edFound"></div>
+      </div>
+      <button type="button" class="sum only-quick" id="edSum" hidden></button>
+      <!-- くわしいメモ：くわしく入力だけに出す。カレンダーの行には出さない -->
+      <div class="field only-detail">
+        <label for="edNote">くわしいメモ</label>
+        <textarea id="edNote" autocomplete="off" placeholder="くわしい内容を入力（カレンダーには出ません）"></textarea>
+        <div class="found" id="edNoteFound"></div>
+      </div>
+      <div class="field only-detail">
+        <label for="edPlace">場所（集合場所など）</label>
+        <div class="linkrow">
+          <input type="text" id="edPlace" placeholder="例：渋谷駅ハチ公前／住所／地図のリンク" autocomplete="off" enterkeyhint="done">
+          <a class="chip map" id="edPlaceOpen" href="#" target="_blank" rel="noopener" hidden aria-label="Googleマップで開く"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0C18.5 15.4 12 21 12 21z"/><circle cx="12" cy="10" r="2.3"/></svg><span>地図</span></a>
+        </div>
+      </div>
+      <div class="field only-detail">
+        <label for="edItem">持ち物</label>
+        <ul class="items" id="edItems"></ul>
+        <div class="linkrow">
+          <input type="text" id="edItem" placeholder="例：タオル" autocomplete="off" enterkeyhint="done">
+          <button class="btn" id="edItemAdd" type="button">追加</button>
+        </div>
+      </div>
+      <div class="field only-detail">
+        <label for="edLink">リンク（Zoom・セミナーなど）</label>
+        <div class="linkrow">
+          <input type="url" id="edLink" placeholder="https://" autocomplete="off" inputmode="url">
+          <a class="chip" id="edLinkOpen" href="#" target="_blank" rel="noopener" hidden>開く</a>
+        </div>
+      </div>
+      <div class="field only-detail">
+        <label>写真</label>
+        <div class="photos" id="edPhotos"></div>
+        <input type="file" id="edFile" accept="image/*" multiple hidden>
+        <p class="hint">QRコードが写った画像を追加すると、自動で読み取ってリンク欄に入れます。写真をタップすると拡大表示します。</p>
+      </div>
+      <!-- 写真のエラーはかんたん入力でも見えるよう、写真欄の外に置く -->
+      <p class="err" id="edErr" hidden></p>
+    </div>
+  </div>
+</div>
+
+<div class="viewer" id="viewer" hidden>
+  <div class="top gutter">
+    <button class="btn" id="vClose">閉じる</button>
+    <button class="btn danger" id="vDelete">この写真を削除</button>
+  </div>
+  <div class="stage"><img id="vImg" alt="添付した写真"></div>
+  <div class="bottom gutter">
+    <div class="qrtext" id="vQrText" hidden></div>
+    <a class="btn" id="vQrOpen" href="#" target="_blank" rel="noopener" hidden>QRのページを開く</a>
+  </div>
+</div>
+
+<div class="login" id="login" role="dialog" aria-modal="true" aria-labelledby="loginTitle" hidden>
+  <div class="login-in">
+    <div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4" stroke-linecap="round"/></svg></div>
+    <h2 id="loginTitle">縦型カレンダー&amp;簡単メモ</h2>
+    <p>予定やメモを保存して、iPhoneとパソコンで同じ内容を見るために、Googleアカウントでログインしてください。</p>
+    <button class="btn primary" id="loginBtn" type="button">Googleでログイン</button>
+    <a class="btn ghost" id="demoBtn" href="?demo" style="display:grid;place-items:center;text-decoration:none;color:inherit">デモを見る（ログインなし）</a>
+    <p class="err" id="loginErr" hidden></p>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const WK = ["日", "月", "火", "水", "木", "金", "土"];
+  const $ = (id) => document.getElementById(id);
+  const pad = (n) => String(n).padStart(2, "0");
+  const monthKey = (y, m) => `${y}-${pad(m)}`;
+  const URL_RE = /https?:\/\/[^\s<>"'「」、。]+/g;
+  const isUrl = (s) => /^https?:\/\/\S+$/i.test(String(s || "").trim());
+  // 色ラベル：保存する値 → 名前（「なし」のときは color を保存しない）
+  const COLORS = { yellow: "黄", blue: "青", green: "緑", red: "赤", gray: "グレー" };
+
+  // ---------- 日本の祝日（振替休日・国民の休日を含む） ----------
+  function nthMonday(y, m, n) {
+    const first = new Date(y, m - 1, 1).getDay();
+    return 1 + ((8 - first) % 7) + (n - 1) * 7;
+  }
+  function equinox(y, base) {
+    return Math.floor(base + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
+  }
+  const holidayCache = new Map();
+  function holidaysOf(y) {
+    if (holidayCache.has(y)) return holidayCache.get(y);
+    const h = new Map();
+    const add = (m, d, name) => h.set(`${pad(m)}-${pad(d)}`, name);
+    add(1, 1, "元日");
+    add(1, nthMonday(y, 1, 2), "成人の日");
+    add(2, 11, "建国記念の日");
+    if (y >= 2020) add(2, 23, "天皇誕生日");
+    add(3, equinox(y, 20.8431), "春分の日");
+    add(4, 29, "昭和の日");
+    add(5, 3, "憲法記念日");
+    add(5, 4, "みどりの日");
+    add(5, 5, "こどもの日");
+    if (y === 2020) { add(7, 23, "海の日"); add(7, 24, "スポーツの日"); add(8, 10, "山の日"); }
+    else if (y === 2021) { add(7, 22, "海の日"); add(7, 23, "スポーツの日"); add(8, 8, "山の日"); }
+    else { add(7, nthMonday(y, 7, 3), "海の日"); add(8, 11, "山の日"); add(10, nthMonday(y, 10, 2), "スポーツの日"); }
+    add(9, nthMonday(y, 9, 3), "敬老の日");
+    add(9, equinox(y, 23.2488), "秋分の日");
+    add(11, 3, "文化の日");
+    add(11, 23, "勤労感謝の日");
+    if (y < 2020) add(12, 23, "天皇誕生日");
+
+    const keyOf = (dt) => `${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+    // 国民の休日：祝日に挟まれた平日
+    for (const k of [...h.keys()]) {
+      const [m, d] = k.split("-").map(Number);
+      const mid = new Date(y, m - 1, d + 1), next = new Date(y, m - 1, d + 2);
+      if (!h.has(keyOf(mid)) && h.has(keyOf(next)) && mid.getDay() !== 0 && mid.getFullYear() === y) h.set(keyOf(mid), "国民の休日");
+    }
+    // 振替休日：日曜の祝日の後の最初の平日
+    for (const k of [...h.keys()].sort()) {
+      const [m, d] = k.split("-").map(Number);
+      if (new Date(y, m - 1, d).getDay() !== 0) continue;
+      let dt = new Date(y, m - 1, d + 1);
+      while (h.has(keyOf(dt))) dt = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() + 1);
+      if (dt.getFullYear() === y) h.set(keyOf(dt), "振替休日");
+    }
+    holidayCache.set(y, h);
+    return h;
+  }
+  const holidayName = (y, m, d) => holidaysOf(y).get(`${pad(m)}-${pad(d)}`) || "";
+
+  // デモ：URLに ?demo があるとき、または GitHub Pages で開いたとき。
+  // ログインもサーバーも使わず、見本の予定をこのブラウザの中（本物とは別の場所）にだけ保存する
+  const DEMO = /[?&]demo(=|&|$)/.test(location.search) || /\.github\.io$/.test(location.hostname);
+
+  // ---------- 保存先：アカウント保存（db + assets）／この端末（IndexedDB） ----------
+  function idb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DEMO ? "vcal-demo" : "vcal", 1);
+      req.onupgradeneeded = () => { req.result.createObjectStore("months"); req.result.createObjectStore("photos"); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  function idbDo(db, store, mode, fn) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(store, mode);
+      const r = fn(tx.objectStore(store));
+      tx.oncomplete = () => resolve(r && "result" in r ? r.result : undefined);
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  function makeLocalStore(db) {
+    const urls = new Map();
+    const listeners = new Map();
+    return {
+      kind: "local",
+      subscribe(mk, cb) {
+        let alive = true;
+        idbDo(db, "months", "readonly", (s) => s.get(mk)).then((v) => { if (alive) cb(v || { days: {} }); }).catch(() => alive && cb({ days: {} }));
+        listeners.set(mk, cb);
+        return () => { alive = false; listeners.delete(mk); };
+      },
+      async save(mk, doc) { await idbDo(db, "months", "readwrite", (s) => s.put(doc, mk)); },
+      async upload(blob) {
+        const id = "l" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        await idbDo(db, "photos", "readwrite", (s) => s.put(blob, id));
+        urls.set(id, URL.createObjectURL(blob));
+        return id;
+      },
+      async remove(id) { await idbDo(db, "photos", "readwrite", (s) => s.delete(id)); },
+      async url(id) {
+        if (urls.has(id)) return urls.get(id);
+        const blob = await idbDo(db, "photos", "readonly", (s) => s.get(id));
+        if (!blob) return "";
+        const u = URL.createObjectURL(blob); urls.set(id, u); return u;
+      },
+    };
+  }
+  function makeRemoteStore(db, assets) {
+    return {
+      kind: "remote",
+      canUpload: !!assets,
+      subscribe(mk, cb, onErr) {
+        return db.doc("months/" + mk).onSnapshot(
+          (snap) => cb(snap.exists ? structuredClone(snap.data()) : { days: {} }),
+          (e) => onErr && onErr(e)
+        );
+      },
+      async save(mk, doc) {
+        try { await db.doc("months/" + mk).set(doc); }
+        catch (e) {
+          if (e && e.code === "unavailable") { await new Promise((r) => setTimeout(r, 600 + Math.random() * 600)); await db.doc("months/" + mk).set(doc); }
+          else throw e;
+        }
+      },
+      async upload(blob) {
+        if (!assets) throw { code: "not_granted" };
+        const r = await assets.upload(blob, { type: blob.type || "image/jpeg" });
+        return r.id;
+      },
+      async remove(id) { if (assets) await assets.delete(id).catch(() => {}); },
+      async url(id) { return "/_blob/" + id; },
+    };
+  }
+
+  // ---------- 保存先：Firebase（Googleログイン + Firestore + Storage） ----------
+  // データは users/{uid}/months/{YYYY-MM}・users/{uid}/todos/{id}、写真は Storage の users/{uid}/photos/{id}。
+  // Firestore はこの端末にも控えを持つので、電波がなくても読み書きでき、つながったら自動で送る。
+  const FB_SDK = "./vendor/firebase-13.3.0.js";
+  // 設定は Firebase Hosting が配る /__/firebase/init.json を使い、オフラインでも起動できるようこの端末に覚えておく
+  async function firebaseSetup() {
+    if (window.VCAL_FIREBASE) return window.VCAL_FIREBASE; // 手元のエミュレーターで試すとき
+    if (location.protocol !== "https:") return null;
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem("vcal.fbconfig") || "null"); } catch (_) {}
+    const fresh = fetch("/__/firebase/init.json", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c) => {
+        if (!c || !c.apiKey || !c.projectId) return null;
+        try { localStorage.setItem("vcal.fbconfig", JSON.stringify(c)); } catch (_) {}
+        return c;
+      })
+      .catch(() => null);
+    const config = cached && cached.apiKey ? cached : await fresh;
+    return config ? { config } : null;
+  }
+
+  // 送信待ちの数と、送れなかったときの知らせ。画面下の案内文に出す
+  const sync = (() => {
+    let pending = 0, err = "", base = "", tdBase = "";
+    const msgOf = (e) => {
+      const c = e && e.code || "";
+      if (c === "permission-denied" || c === "storage/unauthorized") return "このGoogleアカウントでは保存できません。☰ からログアウトして、登録したアカウントでログインし直してください。";
+      if (c === "resource-exhausted") return "Firebaseの利用上限に達したため保存できません。";
+      return "保存に失敗しました。通信状態を確認してください。";
+    };
+    function show() {
+      if (!base) return;
+      let t = "";
+      if (err) t = err;
+      else if (!navigator.onLine) t = pending ? "オフラインです。変更はこの端末に保存し、つながったら自動で送ります。" : "オフラインです。この端末に保存してある内容を表示しています。";
+      setStatus(t || base);
+      $("tdNote").textContent = t || tdBase;
+    }
+    window.addEventListener("online", show);
+    window.addEventListener("offline", show);
+    return {
+      setBase(a, b) { base = a; tdBase = b; show(); },
+      // p はサーバーに届いたら終わる。オフラインの間は終わらない
+      track(p) {
+        pending++; show();
+        Promise.resolve(p).then(() => { err = ""; }, (e) => { err = msgOf(e); })
+          .finally(() => { pending--; show(); });
+      },
+      fail(e) { err = msgOf(e); show(); },
+      pending: () => pending,
+    };
+  })();
+
+  function makeFirebaseStore(fb, db, storage, uid) {
+    const monthRef = (mk) => fb.doc(db, "users", uid, "months", mk);
+    const photoRef = (id) => fb.ref(storage, `users/${uid}/photos/${id}`);
+    // 写真の表示用URLはこの端末に覚えておく（毎回問い合わせない・オフラインでも出せる）
+    const URL_KEY = "vcal.photoUrls." + uid;
+    let urls = {};
+    try { urls = JSON.parse(localStorage.getItem(URL_KEY) || "{}") || {}; } catch (_) {}
+    const keepUrls = () => { try { localStorage.setItem(URL_KEY, JSON.stringify(urls)); } catch (_) {} };
+    const asking = new Map();
+    return {
+      kind: "firebase",
+      canUpload: true,
+      // ready: サーバーの最新を受け取った（またはオフラインで控えしかない）。それまでは日付を開かない
+      subscribe(mk, cb) {
+        let last = "", ready = false, latest = null;
+        const timer = setTimeout(() => { if (!ready && latest) { ready = true; cb(structuredClone(latest), true); } }, 3000);
+        const un = fb.onSnapshot(monthRef(mk), { includeMetadataChanges: true }, (snap) => {
+          const data = snap.exists() ? snap.data() : { days: {} };
+          const nowReady = ready || !snap.metadata.fromCache || !navigator.onLine;
+          const key = JSON.stringify(data);
+          latest = data;
+          if (key === last && nowReady === ready) return;
+          last = key; ready = nowReady;
+          cb(structuredClone(data), ready);
+        }, (e) => sync.fail(e));
+        return () => { clearTimeout(timer); un(); };
+      },
+      // 変えた日だけを書く（別の端末で同じ月のほかの日を直していても消さない）。サーバーに届くのは待たない
+      save(mk, doc, key) {
+        const p = key
+          ? fb.setDoc(monthRef(mk), { days: { [key]: doc.days[key] || fb.deleteField() } }, { mergeFields: [new fb.FieldPath("days", key)] })
+          : fb.setDoc(monthRef(mk), doc);
+        sync.track(p);
+        return Promise.resolve();
+      },
+      async upload(blob) {
+        if (!navigator.onLine) throw { code: "offline" };
+        const id = "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        const r = photoRef(id);
+        try {
+          await fb.uploadBytes(r, blob, { contentType: blob.type || "image/jpeg", cacheControl: "private, max-age=31536000" });
+        } catch (e) {
+          throw { code: e && e.code === "storage/quota-exceeded" ? "quota_or_state" : e && e.code === "storage/retry-limit-exceeded" ? "offline" : e && e.code };
+        }
+        try { urls[id] = await fb.getDownloadURL(r); keepUrls(); } catch (_) {}
+        return id;
+      },
+      async remove(id) {
+        delete urls[id]; keepUrls();
+        await fb.deleteObject(photoRef(id)).catch(() => {});
+      },
+      url(id) {
+        if (urls[id]) return Promise.resolve(urls[id]);
+        if (!asking.has(id)) {
+          asking.set(id, fb.getDownloadURL(photoRef(id)).then((u) => { urls[id] = u; keepUrls(); return u; }, () => "")
+            .finally(() => asking.delete(id)));
+        }
+        return asking.get(id);
+      },
+    };
+  }
+
+  let store = null;
+  let unsub = null;
+  let monthDoc = { days: {} };
+  let saving = Promise.resolve();
+
+  const today = new Date();
+  let cy = today.getFullYear(), cm = today.getMonth() + 1;
+
+  // ---------- 画像処理：縮小とQR読み取り ----------
+  function loadImage(blob) {
+    return new Promise((resolve, reject) => {
+      const u = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => resolve({ img, release: () => URL.revokeObjectURL(u) });
+      img.onerror = () => { URL.revokeObjectURL(u); reject(new Error("画像を読み込めませんでした")); };
+      img.src = u;
+    });
+  }
+  function drawScaled(img, maxSide) {
+    const s = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * s)), h = Math.max(1, Math.round(img.naturalHeight * s));
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    return { c, ctx, w, h };
+  }
+  function readQR(img) {
+    if (typeof window.jsQR !== "function") return "";
+    for (const side of [1400, 900, 2200]) {
+      const { ctx, w, h } = drawScaled(img, side);
+      const data = ctx.getImageData(0, 0, w, h);
+      const r = window.jsQR(data.data, w, h, { inversionAttempts: "attemptBoth" });
+      if (r && r.data) return r.data.trim();
+    }
+    return "";
+  }
+  async function prepareImage(file) {
+    const { img, release } = await loadImage(file);
+    try {
+      const qr = readQR(img);
+      const { c } = drawScaled(img, 1600);
+      const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.85));
+      return { blob, qr };
+    } finally { release(); }
+  }
+
+  // ---------- 月の表示 ----------
+  const daysEl = $("days");
+  function dayData(d) { return (monthDoc.days && monthDoc.days[pad(d)]) || null; }
+  function firstUrl(text) { const m = String(text || "").match(URL_RE); return m ? m[0] : ""; }
+  function qrUrlOf(dd) { const p = (dd && dd.photos || []).find((x) => isUrl(x.qr)); return p ? p.qr : ""; }
+  // 場所：地図のリンク（共有で貼ったもの）があればそれを、なければ名前や住所でGoogleマップを検索する
+  function mapUrl(place) {
+    const s = String(place || "").trim();
+    if (!s) return "";
+    return firstUrl(s) || "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.replace(/\s+/g, " "));
+  }
+  function placeLabel(place) { return String(place || "").replace(URL_RE, " ").replace(/\s+/g, " ").trim(); }
+
+  const icons = {
+    link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
+    pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0C18.5 15.4 12 21 12 21z"/><circle cx="12" cy="10" r="2.3"/></svg>',
+    bag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 8.5h12l-1 11.5H7z"/><path d="M9 8.5V7a3 3 0 0 1 6 0v1.5"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+    photo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 16.5l4-3.5 3.5 3 2.5-2 5 4"/></svg>',
+    expand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4.5h5.5V10M19.5 4.5L13 11M10 19.5H4.5V14M4.5 19.5L11 13"/></svg>',
+    note: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3.5" width="14" height="17" rx="2.5"/><path d="M8.5 8.5h7M8.5 12h7M8.5 15.5h4"/></svg>',
+    shrink: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 4.5L14 10M14 5.5V10h4.5M4.5 19.5L10 14M10 18.5V14H5.5"/></svg>',
+  };
+
+  async function render() {
+    const ml = $("monthLabel");
+    ml.textContent = `${cy}年${cm}月`;
+    ml.setAttribute("aria-label", `${cy}年${cm}月`);
+    const last = new Date(cy, cm, 0).getDate();
+    const isThisMonth = cy === today.getFullYear() && cm === today.getMonth() + 1;
+    const monthDiff = (cy - today.getFullYear()) * 12 + (cm - today.getMonth() - 1);
+    const frag = document.createDocumentFragment();
+    for (let d = 1; d <= last; d++) {
+      const wd = new Date(cy, cm - 1, d).getDay();
+      const hol = holidayName(cy, cm, d);
+      const dd = dayData(d);
+      const isToday = isThisMonth && d === today.getDate();
+      const isPast = monthDiff < 0 || (isThisMonth && d < today.getDate());
+      const filled = !!dd && !!(dd.memo || dd.note || dd.link || dd.place || (dd.photos && dd.photos.length) || (dd.items && dd.items.length) || dd.color);
+      const color = dd && COLORS[dd.color] ? dd.color : "";
+      const li = document.createElement("li");
+      li.className = "day gutter" + (wd === 0 ? " sun wkend" : wd === 6 ? " sat" : "") + (hol ? " hol" : "") + (isToday ? " is-today" : "") + (isPast ? " is-past" : "") + (filled ? "" : " is-empty");
+      li.tabIndex = 0;
+      li.dataset.day = d;
+      li.setAttribute("role", "button");
+      li.setAttribute("aria-label", `${cm}月${d}日（${WK[wd]}）を編集` + (color ? `（色：${COLORS[color]}）` : "") + (dd && dd.note ? "（くわしいメモあり）" : ""));
+
+      const num = document.createElement("span"); num.className = "num"; num.textContent = d;
+      const wk = document.createElement("span"); wk.className = "wk"; wk.textContent = `(${WK[wd]})`;
+      const date = document.createElement("div"); date.className = "date"; date.append(num, wk);
+      const body = document.createElement("div"); body.className = "body";
+      if (color) { const dot = document.createElement("span"); dot.className = "dot"; dot.dataset.color = color; dot.setAttribute("aria-hidden", "true"); body.append(dot); }
+      const memo = document.createElement("div");
+      const text = dd && dd.memo ? dd.memo : "";
+      // 行にはメモを3行まで出す（空の行は詰める）。メモが空で場所だけある日は、場所の名前を出す
+      const line = text.split("\n").map((l) => l.trim()).filter(Boolean).join("\n") || placeLabel(dd && dd.place);
+      memo.className = "memo" + (line ? "" : " empty");
+      memo.textContent = line || "---";
+      body.append(memo);
+      if (hol) { const hn = document.createElement("div"); hn.className = "holname"; hn.textContent = hol; body.append(hn); }
+
+      const extras = document.createElement("div"); extras.className = "extras";
+      // くわしいメモは行に出さず、あることだけを印で示す
+      if (dd && dd.note) {
+        const nm = document.createElement("span"); nm.className = "notemark"; nm.innerHTML = icons.note;
+        nm.setAttribute("role", "img"); nm.setAttribute("aria-label", "くわしいメモあり");
+        extras.append(nm);
+      }
+      const photos = (dd && dd.photos) || [];
+      if (photos.length) {
+        const th = document.createElement("div"); th.className = "thumbs";
+        for (const p of photos.slice(0, 2)) {
+          const im = document.createElement("img"); im.alt = ""; im.loading = "lazy";
+          store.url(p.id).then((u) => { if (u) im.src = u; });
+          th.append(im);
+        }
+        if (photos.length > 2) { const mo = document.createElement("span"); mo.className = "more"; mo.textContent = `+${photos.length - 2}`; th.append(mo); }
+        extras.append(th);
+      }
+      const items = (dd && dd.items) || [];
+      if (items.length) {
+        const n = items.filter((x) => x.done).length;
+        const pk = document.createElement("span");
+        pk.className = "pack" + (n === items.length ? " all" : "");
+        pk.innerHTML = icons.bag + `<span>${n}/${items.length}</span>`;
+        pk.setAttribute("aria-label", `持ち物 ${items.length}個中${n}個準備済み`);
+        extras.append(pk);
+      }
+      const map = mapUrl(dd && dd.place);
+      const link = (dd && isUrl(dd.link) && dd.link) || firstUrl(text) || qrUrlOf(dd);
+      if (map) {
+        const a = document.createElement("a");
+        // リンクの「開く」も並ぶ日は、メモが読めるようにピンだけにする
+        a.className = "chip map" + (link ? " compact" : ""); a.href = map; a.target = "_blank"; a.rel = "noopener";
+        a.innerHTML = icons.pin + "<span>地図</span>";
+        a.setAttribute("aria-label", `${d}日の場所「${placeLabel(dd.place) || "地図のリンク"}」をGoogleマップで開く`);
+        a.addEventListener("click", (e) => e.stopPropagation());
+        extras.append(a);
+      }
+      if (link) {
+        const a = document.createElement("a");
+        a.className = "chip"; a.href = link; a.target = "_blank"; a.rel = "noopener";
+        a.innerHTML = icons.link + "<span>開く</span>";
+        a.setAttribute("aria-label", `${d}日のリンクを開く`);
+        a.addEventListener("click", (e) => e.stopPropagation());
+        extras.append(a);
+      }
+      li.append(date, body, extras);
+      frag.append(li);
+    }
+    daysEl.replaceChildren(frag);
+  }
+
+  // 今日の行が見える位置までスクロールする（すぐ上に2日分を残す）
+  function scrollToToday() {
+    const li = daysEl.querySelector(".is-today");
+    if (!li || daysEl.hidden) return;
+    const head = document.querySelector(".appbar").getBoundingClientRect().bottom;
+    const p1 = li.previousElementSibling, p2 = p1 && p1.previousElementSibling;
+    const h = (el) => (el ? el.getBoundingClientRect().height : 0); // 縮めて表示しているときも画面上の高さで測る
+    const above = h(p1) + h(p2);
+    window.scrollTo(0, Math.max(0, li.getBoundingClientRect().top + window.scrollY - head - above));
+  }
+
+  // toToday: 起動時と「今月」のときは、予定を読み込んで行の高さが決まってから今日の行へ移動する
+  let wantToday = false;
+  // 表示中の月の予定が届くまでは日付を開かない（空のまま開いて保存すると、保存済みの場所や写真などを消してしまう）
+  let loaded = false;
+  function openMonth(y, m, toToday) {
+    cy = y; cm = m;
+    if (cm < 1) { cm = 12; cy--; }
+    if (cm > 12) { cm = 1; cy++; }
+    monthDoc = { days: {} };
+    loaded = false;
+    render();
+    wantToday = !!toToday;
+    if (!wantToday) window.scrollTo(0, 0);
+    if (unsub) unsub();
+    if (!store) { if (wantToday) { wantToday = false; scrollToToday(); } return; }
+    const mk = monthKey(cy, cm);
+    unsub = store.subscribe(mk, (doc, ready) => {
+      if (mk !== monthKey(cy, cm)) return;
+      monthDoc = doc && doc.days ? doc : { days: {} };
+      loaded = ready !== false;
+      render();
+      if (wantToday && loaded) { wantToday = false; scrollToToday(); }
+    }, () => { noteBeforeFail = ""; setStatus("保存先との接続が切れました。ページを開き直してください。"); });
+  }
+
+  function setStatus(t) { $("status").textContent = t; }
+
+  // ---------- 編集シート ----------
+  let ed = null; // { day, photos:[{id,qr,url,isNew}], items:[{t,done}], color, removed:[ids], busy:n, openedAt, saving }
+  const editor = $("editor");
+
+  // 日付のダブルタップ／ダブルクリックの2回目が、開いたばかりの色ボタンや一覧に当たっても反応しない（キー操作の click は detail が 0）
+  const tooSoon = (e) => e.detail > 1 || (e.detail === 1 && performance.now() - ed.openedAt < 350);
+  const swatches = ["", ...Object.keys(COLORS)].map((c) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "sw" + (c ? "" : " none"); b.dataset.color = c;
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-label", COLORS[c] || "色なし");
+    b.addEventListener("click", (e) => { if (ed && !tooSoon(e)) { ed.color = c; paintColors(); } });
+    return b;
+  });
+  $("edColors").append(...swatches);
+  function paintColors() {
+    // 知らない色の値は「なし」に見せる（色を押さなければ保存済みの値はそのまま残る）
+    const on = COLORS[ed.color] ? ed.color : "";
+    for (const b of swatches) {
+      b.setAttribute("aria-checked", String(b.dataset.color === on));
+      b.tabIndex = b.dataset.color === on ? 0 : -1;
+    }
+  }
+
+  function openEditor(d) {
+    const dd = dayData(d) || {};
+    const wd = new Date(cy, cm - 1, d).getDay();
+    const hol = holidayName(cy, cm, d);
+    ed = { day: d, photos: (dd.photos || []).map((p) => ({ ...p })), items: (dd.items || []).map((x) => ({ ...x })), color: dd.color || "", removed: [], busy: 0, openedAt: performance.now() };
+    const t = $("edTitle");
+    t.textContent = `${cy === today.getFullYear() ? "" : `${cy}年`}${cm}月${d}日（${WK[wd]}）`;
+    if (hol) { const s = document.createElement("span"); s.className = "hn"; s.textContent = hol; t.append(s); }
+    $("edMemo").value = dd.memo || "";
+    $("edNote").value = dd.note || "";
+    $("edLink").value = dd.link || "";
+    $("edPlace").value = dd.place || "";
+    $("edErr").hidden = true;
+    $("edItem").value = "";
+    updateFound(); updateLinkOpen(); updatePlaceOpen(); renderPhotos(); renderItems(); paintColors();
+    // 変更があったかは入力欄の内容で比べる（保存済みの形や項目の順番で「変更あり」にならないように）
+    ed.orig = JSON.stringify(editorState());
+    editor.hidden = false;
+    // 日付から開くときは、前回どちらで閉じても「かんたん入力」から
+    setMode(true);
+    document.body.style.overflow = "hidden";
+    document.body.classList.add("is-editing");
+    // タップの直後にフォーカスしてキーボードをすぐ出す（iOSはタップ処理の中でないと出ない）
+    focusMemo();
+    placeFab();
+  }
+  // かんたん入力（色とかんたんメモ）／くわしく入力（くわしいメモ・場所・持ち物・リンク・写真）。メモは2つに分かれていて、それぞれの画面にだけ出る
+  function setMode(quick) {
+    editor.classList.toggle("is-quick", quick);
+    const b = $("edMode");
+    b.innerHTML = (quick ? icons.expand : icons.shrink) + `<span>${quick ? "くわしく" : "かんたん"}</span>`;
+    b.setAttribute("aria-label", quick ? "くわしく入力に切り替える" : "かんたん入力に切り替える");
+    if (quick) renderSummary();
+    fitMemo(); fitNote();
+    editor.scrollTop = 0;
+  }
+  function focusMemo() {
+    const m = $("edMemo");
+    m.focus({ preventScroll: true });
+    m.setSelectionRange(m.value.length, m.value.length);
+  }
+  // キーボードが出たら、入力ページを見えている範囲に合わせる（下までスクロールできるように）。✓ボタンもキーボードの上に置く
+  function placeFab() {
+    const vv = window.visualViewport, f = $("edSave");
+    if (!vv || editor.hidden) return;
+    const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    if (hidden > 40 || vv.offsetTop > 0) {
+      editor.style.top = `${vv.offsetTop}px`;
+      editor.style.height = `${vv.height}px`;
+      editor.style.bottom = "auto";
+    } else {
+      editor.style.top = editor.style.height = editor.style.bottom = "";
+    }
+    f.style.bottom = hidden > 40 ? `${hidden + 14}px` : "";
+    fitSum();
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", placeFab);
+    window.visualViewport.addEventListener("scroll", placeFab);
+  }
+  function closeEditor() {
+    editor.hidden = true;
+    editor.style.top = editor.style.height = editor.style.bottom = "";
+    document.body.style.overflow = "";
+    document.body.classList.remove("is-editing");
+    ed = null;
+  }
+  function showErr(t) { const e = $("edErr"); e.textContent = t; e.hidden = !t; }
+  const WAIT_MSG = "写真の保存が終わるまでお待ちください。";
+  // メモ欄は文章の長さに合わせて伸ばす（枠の中でスクロールさせず、ページ全体で読む）。
+  // かんたん入力ではCSSで残りの高さまで広げるので、文章の高さを測る間だけ広げるのを止める
+  function fitMemo() {
+    // かんたんメモの欄はかんたん入力だけに出る（隠れている間は高さを測れない）
+    if (!editor.classList.contains("is-quick")) return;
+    const m = $("edMemo"), top = editor.scrollTop;
+    m.style.flex = "none";
+    m.style.height = "auto";
+    m.style.height = `${m.scrollHeight + m.offsetHeight - m.clientHeight}px`;
+    m.style.flex = "";
+    editor.scrollTop = top;
+    fitSum();
+  }
+  // くわしいメモの欄も文章の長さに合わせて伸ばす（くわしく入力だけに出る）
+  function fitNote() {
+    if (editor.hidden || editor.classList.contains("is-quick")) return;
+    const n = $("edNote"), top = editor.scrollTop;
+    n.style.height = "auto";
+    n.style.height = `${n.scrollHeight + n.offsetHeight - n.clientHeight}px`;
+    editor.scrollTop = top;
+  }
+  // 下の一覧が✓と重なる位置にあるときだけ is-short（一覧を✓の左までにする）。✓は固定なので、いちばん上までスクロールした位置で比べる
+  function fitSum() {
+    const s = $("edSum");
+    if (editor.hidden || s.hidden || !editor.classList.contains("is-quick")) return;
+    const f = $("edSave").getBoundingClientRect();
+    editor.classList.toggle("is-short", f.left < $("edMemo").getBoundingClientRect().right && s.getBoundingClientRect().bottom + editor.scrollTop > f.top);
+  }
+
+  // メモの中のURLを、欄の下に押せるリンクとして並べる（かんたんメモ・くわしいメモそれぞれ）
+  function updateFound() {
+    for (const [from, to] of [["edMemo", "edFound"], ["edNote", "edNoteFound"]]) {
+      const box = $(to); box.replaceChildren();
+      const urls = String($(from).value).match(URL_RE) || [];
+      for (const u of urls) { const a = document.createElement("a"); a.href = u; a.target = "_blank"; a.rel = "noopener"; a.textContent = u; box.append(a); }
+    }
+  }
+  function updatePlaceOpen() {
+    const u = mapUrl($("edPlace").value), a = $("edPlaceOpen");
+    a.hidden = !u;
+    if (u) a.href = u;
+  }
+  // リンク欄の値。「zoom.us/…」のように https:// が無ければ補う（保存するときも同じ）
+  function linkValue() {
+    const v = $("edLink").value.trim();
+    return v && !/^https?:\/\//i.test(v) && /^[\w-]+(\.[\w-]+)+/.test(v) ? "https://" + v : v;
+  }
+  function updateLinkOpen() {
+    const v = linkValue(), a = $("edLinkOpen");
+    a.hidden = !isUrl(v);
+    if (isUrl(v)) a.href = v;
+  }
+  // かんたん入力の下の一覧。くわしいメモ・場所・持ち物・リンク・写真のどれかがあるときだけ出す（メモの中のURLはリンクに数えない）
+  function renderSummary() {
+    const box = $("edSum"), parts = [], said = [];
+    const add = (cls, icon, text, label) => {
+      const s = document.createElement("span"); s.className = cls; s.innerHTML = icon;
+      const t = document.createElement("span"); t.textContent = text; s.append(t);
+      parts.push(s); said.push(label);
+    };
+    if ($("edNote").value.trim()) {
+      const s = document.createElement("span"); s.className = "note"; s.innerHTML = icons.note;
+      parts.push(s); said.push("くわしいメモあり");
+    }
+    const place = $("edPlace").value.trim();
+    if (place) add("place", icons.pin, placeLabel(place) || "地図", `場所 ${placeLabel(place) || "地図のリンク"}`);
+    if (ed.items.length) {
+      const n = ed.items.filter((x) => x.done).length;
+      add("", icons.bag, `${n}/${ed.items.length}`, `持ち物 ${ed.items.length}個中${n}個準備済み`);
+    }
+    if (isUrl(linkValue()) || qrUrlOf(ed)) add("link", icons.link, "リンク", "リンクあり");
+    if (ed.photos.length) add("", icons.photo, String(ed.photos.length), `写真 ${ed.photos.length}枚`);
+    const more = document.createElement("span"); more.className = "more"; more.innerHTML = "<span>くわしく</span> ›";
+    box.replaceChildren(...parts, more);
+    box.setAttribute("aria-label", `くわしく入力を開く（${said.join("、")}）`);
+    box.hidden = !parts.length;
+    fitSum();
+  }
+
+  function renderItems() {
+    const box = $("edItems"); box.replaceChildren();
+    ed.items.forEach((x, i) => {
+      const li = document.createElement("li"); if (x.done) li.className = "done";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "td-check"; cb.checked = !!x.done;
+      cb.setAttribute("aria-label", `${x.t} を${x.done ? "未準備に戻す" : "準備済みにする"}`);
+      cb.addEventListener("change", () => { x.done = cb.checked; renderItems(); });
+      const tx = document.createElement("span"); tx.className = "it"; tx.textContent = x.t;
+      const del = document.createElement("button"); del.type = "button"; del.className = "td-del"; del.textContent = "×";
+      del.setAttribute("aria-label", `${x.t} を削除`);
+      del.addEventListener("click", () => { ed.items.splice(i, 1); renderItems(); });
+      li.append(cb, tx, del); box.append(li);
+    });
+    renderSummary();
+  }
+  function addItem() {
+    const t = $("edItem").value.trim();
+    if (!ed || !t) return;
+    ed.items.push({ t, done: false });
+    $("edItem").value = "";
+    renderItems();
+  }
+
+  function renderPhotos() {
+    const box = $("edPhotos"); box.replaceChildren();
+    ed.photos.forEach((p, i) => {
+      const b = document.createElement("button"); b.className = "ph"; b.type = "button";
+      b.setAttribute("aria-label", `写真${i + 1}を拡大`);
+      const im = document.createElement("img"); im.alt = "";
+      if (p.url) im.src = p.url; else store.url(p.id).then((u) => { if (u) { p.url = u; im.src = u; } });
+      b.append(im);
+      if (p.qr) { const q = document.createElement("span"); q.className = "badge"; q.textContent = "QR"; b.append(q); }
+      if (p.pending) { const s = document.createElement("span"); s.className = "busy"; s.textContent = "保存中…"; b.append(s); }
+      else b.addEventListener("click", () => openViewer(i));
+      box.append(b);
+    });
+    const add = document.createElement("button"); add.className = "add"; add.type = "button";
+    add.innerHTML = icons.plus + "<span>写真を追加</span>";
+    add.addEventListener("click", () => $("edFile").click());
+    if (store && store.kind === "remote" && !store.canUpload) { add.disabled = true; add.lastChild.textContent = "追加できません"; }
+    box.append(add);
+    renderSummary();
+  }
+
+  async function addFiles(files) {
+    if (!ed) return;
+    const cur = ed;
+    showErr("");
+    for (const f of files) {
+      if (!f.type.startsWith("image/")) continue;
+      const slot = { id: "", qr: "", url: URL.createObjectURL(f), pending: true, isNew: true };
+      cur.photos.push(slot); cur.busy++;
+      if (ed === cur) renderPhotos();
+      try {
+        const { blob, qr } = await prepareImage(f);
+        slot.id = await store.upload(blob);
+        slot.qr = qr;
+        if (qr && isUrl(qr) && ed === cur && !$("edLink").value.trim()) { $("edLink").value = qr; updateLinkOpen(); }
+      } catch (e) {
+        cur.photos.splice(cur.photos.indexOf(slot), 1);
+        if (ed === cur) showErr(e && e.code === "offline" ? "オフラインのため写真を追加できません。つながってからもう一度お試しください。" : e && e.code === "too_large" ? "写真が大きすぎて保存できませんでした。" : e && e.code === "quota_or_state" ? "写真の保存容量がいっぱいです。不要な写真を削除してください。" : "写真を保存できませんでした。もう一度お試しください。");
+      } finally {
+        slot.pending = false; cur.busy--;
+        if (ed === cur) renderPhotos();
+        // 「お待ちください」は写真の保存が終わったら消す（写真のエラーは残す）
+        if (ed === cur && !cur.busy && $("edErr").textContent === WAIT_MSG) showErr("");
+      }
+    }
+  }
+
+  let noteBeforeFail = ""; // 保存の失敗を出す前の案内文。次に保存できたら戻す
+  function queueSave(mk, doc, key) {
+    // 前の保存が失敗していても次の保存はやり直す（失敗のまま続けると、それからずっと保存できない）
+    saving = saving.catch(() => {}).then(() => store.save(mk, doc, key)).then(() => {
+      if (noteBeforeFail) { setStatus(noteBeforeFail); noteBeforeFail = ""; }
+    }, (e) => {
+      if (!noteBeforeFail) noteBeforeFail = $("status").textContent;
+      setStatus(e && e.code === "invalid_argument" ? "このページでは保存する権限がありません。" : "保存に失敗しました。通信状態を確認してもう一度保存してください。");
+      throw e;
+    });
+    return saving;
+  }
+
+  // 入力欄の今の内容を、保存する形にそろえて返す
+  function editorState() {
+    return {
+      memo: $("edMemo").value.trim(),
+      note: $("edNote").value.trim(),
+      link: linkValue(),
+      place: $("edPlace").value.trim(),
+      photos: ed.photos.filter((p) => p.id).map((p) => (p.qr ? { id: p.id, qr: p.qr } : { id: p.id })),
+      items: ed.items.filter((x) => x.t).map((x) => ({ t: x.t, done: !!x.done })),
+      color: ed.color,
+    };
+  }
+
+  async function saveEditor() {
+    // 保存の途中で ‹ や Esc がもう一度押されても、二重に保存しない
+    if (!ed || ed.saving) return;
+    if (ed.busy) { showErr(WAIT_MSG); return; }
+    const cur = ed;
+    if ($("edItem").value.trim()) addItem();
+    const st = editorState();
+    if (JSON.stringify(st) === cur.orig && !cur.removed.length) { closeEditor(); return; }
+    const { memo, note, link, place, photos, items, color } = st;
+    const mk = monthKey(cy, cm);
+    const doc = structuredClone(monthDoc.days ? monthDoc : { days: {} });
+    const key = pad(cur.day);
+    // 作り直さず保存済みの日に上書きする（ほかの機能が足した項目を消さないため）
+    const day = Object.assign(doc.days[key] || {}, { memo, link, photos });
+    if (note) day.note = note; else delete day.note;
+    if (place) day.place = place; else delete day.place;
+    if (items.length) day.items = items; else delete day.items;
+    if (color) day.color = color; else delete day.color;
+    // 空になった日は消す。ほかの機能の項目が残っている日は消さない
+    if (!memo && !link && !photos.length && Object.keys(day).every((k) => k === "memo" || k === "link" || k === "photos")) delete doc.days[key];
+    else doc.days[key] = day;
+    // 1か月分の予定はまとめて1つに保存する（上限256KB）。超えるときは保存せずに知らせる
+    if (new Blob([JSON.stringify(doc)]).size > 250000) { showErr("この月のメモが長すぎて保存できません。くわしいメモを短くしてください。"); return; }
+    $("edSave").disabled = true;
+    cur.saving = true;
+    try {
+      await queueSave(mk, doc, key);
+      monthDoc = doc; render();
+      for (const id of cur.removed) store.remove(id);
+      if (ed === cur) closeEditor();
+    } catch (e) {
+      if (ed === cur) showErr("保存できませんでした。もう一度お試しください。");
+    } finally { cur.saving = false; $("edSave").disabled = false; }
+  }
+
+  // ---------- 写真ビューア ----------
+  let vIndex = -1, vArmed = false;
+  function openViewer(i) {
+    const p = ed.photos[i]; vIndex = i; vArmed = false;
+    $("vDelete").textContent = "この写真を削除";
+    const img = $("vImg"); img.removeAttribute("src");
+    if (p.url) img.src = p.url; else store.url(p.id).then((u) => { if (u) img.src = u; });
+    const qt = $("vQrText"), qo = $("vQrOpen");
+    qt.hidden = !p.qr; qt.textContent = p.qr ? "QRコード: " + p.qr : "";
+    qo.hidden = !isUrl(p.qr); if (isUrl(p.qr)) qo.href = p.qr;
+    $("viewer").hidden = false;
+  }
+  function closeViewer() { $("viewer").hidden = true; vIndex = -1; }
+  $("vClose").addEventListener("click", closeViewer);
+  $("vDelete").addEventListener("click", () => {
+    if (!ed || vIndex < 0) return;
+    if (!vArmed) { vArmed = true; $("vDelete").textContent = "もう一度押すと削除"; return; }
+    const [p] = ed.photos.splice(vIndex, 1);
+    if (p && p.id) { if (p.isNew) store.remove(p.id); else ed.removed.push(p.id); }
+    closeViewer(); renderPhotos();
+  });
+
+  // ---------- イベント ----------
+  daysEl.addEventListener("click", (e) => {
+    const li = e.target.closest(".day"); if (li && store && loaded) openEditor(Number(li.dataset.day));
+  });
+  daysEl.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const li = e.target.closest(".day"); if (li && store && loaded) { e.preventDefault(); openEditor(Number(li.dataset.day)); }
+  });
+  $("prevBtn").addEventListener("click", () => openMonth(cy, cm - 1));
+  $("nextBtn").addEventListener("click", () => openMonth(cy, cm + 1));
+  const goToday = () => openMonth(today.getFullYear(), today.getMonth() + 1, true);
+
+  const menu = $("menu");
+  $("menuBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    menu.hidden = !menu.hidden;
+    $("menuBtn").setAttribute("aria-expanded", String(!menu.hidden));
+  });
+  document.addEventListener("click", (e) => { if (!menu.hidden && !menu.contains(e.target)) { menu.hidden = true; $("menuBtn").setAttribute("aria-expanded", "false"); } });
+  $("mToday").addEventListener("click", () => { menu.hidden = true; showTab("cal"); goToday(); });
+  $("mJump").addEventListener("click", () => { menu.hidden = true; showTab("cal"); openMonth(today.getFullYear(), today.getMonth() + 2); });
+
+  // 画面の色（メニューは開いたままにして、変わった色をその場で見られるようにする）
+  const themeBtns = [...menu.querySelectorAll("[data-theme-pick]")];
+  let theme = window.__vcalTheme || "light";
+  function applyTheme() {
+    const de = document.documentElement;
+    if (theme === "auto") delete de.dataset.theme; else if (de.dataset.theme !== theme) de.dataset.theme = theme;
+    themeBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.themePick === theme)));
+  }
+  themeBtns.forEach((b) => b.addEventListener("click", () => {
+    theme = b.dataset.themePick;
+    try { localStorage.setItem("vcal.theme", theme); } catch (_) {}
+    applyTheme();
+  }));
+  // 表示する側があとから data-theme を書きかえても、選んだ色に戻す
+  new MutationObserver(() => { if (theme !== "auto" && document.documentElement.dataset.theme !== theme) applyTheme(); })
+    .observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  applyTheme();
+
+  $("edBack").addEventListener("click", saveEditor);
+  $("edSave").addEventListener("click", saveEditor);
+  // かんたん⇄くわしく。かんたんに戻るときは、すぐ書けるようにメモ欄へ（キーボードを出すためタップ処理の中で）
+  $("edMode").addEventListener("click", () => {
+    const quick = !editor.classList.contains("is-quick");
+    setMode(quick);
+    if (quick) focusMemo();
+  });
+  $("edSum").addEventListener("click", (e) => { if (ed && !tooSoon(e)) setMode(false); });
+  // 色を押してもメモ欄からフォーカスを外さない（入力中のキーボードを閉じない）
+  $("edColors").addEventListener("pointerdown", (e) => e.preventDefault());
+  $("edColors").addEventListener("mousedown", (e) => e.preventDefault());
+  $("edColors").addEventListener("keydown", (e) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    const i = swatches.indexOf(e.target);
+    if (!step || i < 0) return;
+    e.preventDefault();
+    const b = swatches[(i + step + swatches.length) % swatches.length];
+    b.click(); b.focus();
+  });
+  $("edMemo").addEventListener("input", () => { updateFound(); fitMemo(); });
+  $("edNote").addEventListener("input", () => { updateFound(); fitNote(); });
+  window.addEventListener("resize", () => { if (!editor.hidden) { fitMemo(); fitNote(); } });
+  $("edLink").addEventListener("input", updateLinkOpen);
+  $("edPlace").addEventListener("input", updatePlaceOpen);
+  $("edPlace").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); e.target.blur(); } });
+  $("edItemAdd").addEventListener("click", () => { addItem(); $("edItem").focus(); });
+  $("edItem").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); addItem(); } });
+  $("edFile").addEventListener("change", (e) => { const fs = [...e.target.files]; e.target.value = ""; addFiles(fs); });
+  document.addEventListener("paste", (e) => {
+    if (!ed) return;
+    const fs = [...(e.clipboardData && e.clipboardData.files || [])].filter((f) => f.type.startsWith("image/"));
+    if (fs.length) { e.preventDefault(); addFiles(fs); }
+  });
+  document.addEventListener("keydown", (e) => {
+    // 日本語の変換中に押した Esc（変換の取り消し）では閉じない（Safari ではそのとき keyCode 229 で届く）
+    if (e.key !== "Escape" || e.isComposing || e.keyCode === 229) return;
+    if (!$("viewer").hidden) closeViewer(); else if (ed) saveEditor(); else menu.hidden = true;
+  });
+
+  // ---------- やること（TODO） ----------
+  const td = (() => {
+    const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const todayStr = () => ymd(new Date());
+    const addDays = (s, n) => { const [y, m, d] = s.split("-").map(Number); return ymd(new Date(y, m - 1, d + n)); };
+    const fmtDue = (s) => {
+      if (!s) return "";
+      const [y, m, d] = s.split("-").map(Number);
+      const t = todayStr();
+      if (s === t) return "今日";
+      if (s === addDays(t, 1)) return "明日";
+      if (s === addDays(t, -1)) return "昨日";
+      return `${m}/${d}(${WK[new Date(y, m - 1, d).getDay()]})`;
+    };
+
+    let tasks = []; // {id,text,done,due,created,doneAt}
+    let view = "open";
+    let pickedDue = "";
+    let tstore = null; // {add,update,remove,restore}
+    let lastDeleted = null, toastTimer = null, clearArmed = false;
+    const chips = [...document.querySelectorAll(".td-chip")];
+
+    function setDue(kind) {
+      pickedDue = kind === "today" ? todayStr() : kind === "tomorrow" ? addDays(todayStr(), 1) : kind;
+      chips.forEach((c) => c.setAttribute("aria-pressed", String(c.dataset.due === kind)));
+      $("tdDate").value = "";
+    }
+    chips.forEach((c) => c.addEventListener("click", () => setDue(c.dataset.due)));
+    $("tdDate").addEventListener("change", (e) => {
+      const v = e.target.value;
+      if (v) { pickedDue = v; chips.forEach((c) => c.setAttribute("aria-pressed", "false")); } else setDue("");
+    });
+    $("tdText").addEventListener("input", (e) => { $("tdAddBtn").disabled = !e.target.value.trim() || !tstore; });
+    $("tdForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = $("tdText").value.trim();
+      if (!text || !tstore) return;
+      $("tdText").value = ""; $("tdAddBtn").disabled = true;
+      const due = pickedDue || "";
+      setDue("");
+      if (view !== "open") switchView("open");
+      await tstore.add({ text, done: false, due, created: Date.now(), doneAt: 0 });
+    });
+
+    function switchView(v) {
+      view = v; clearArmed = false;
+      $("tdTabOpen").setAttribute("aria-selected", String(v === "open"));
+      $("tdTabDone").setAttribute("aria-selected", String(v === "done"));
+      render();
+    }
+    $("tdTabOpen").addEventListener("click", () => switchView("open"));
+    $("tdTabDone").addEventListener("click", () => switchView("done"));
+    $("tdClearDone").addEventListener("click", async () => {
+      if (!clearArmed) { clearArmed = true; render(); return; }
+      clearArmed = false;
+      for (const t of tasks.filter((t) => t.done)) await tstore.remove(t.id);
+    });
+
+    function empty(title, sub) {
+      const d = document.createElement("div"); d.className = "td-empty";
+      const s = document.createElement("strong"); s.textContent = title;
+      d.append(s, sub);
+      return d;
+    }
+    function render() {
+      const now = new Date();
+      $("tdToday").textContent = `${now.getMonth() + 1}月${now.getDate()}日（${WK[now.getDay()]}）`;
+      const t = todayStr();
+      const open = tasks.filter((x) => !x.done), done = tasks.filter((x) => x.done);
+      $("tdCount").textContent = open.length;
+      $("tabTodoN").textContent = open.length ? String(open.length) : "";
+      $("tdNOpen").textContent = open.length; $("tdNDone").textContent = done.length;
+      const clr = $("tdClearDone");
+      clr.hidden = !(view === "done" && done.length);
+      clr.textContent = clearArmed ? "もう一度押すと削除" : "完了したものをすべて削除";
+      clr.classList.toggle("armed", clearArmed);
+      const list = $("tdList");
+      const frag = document.createDocumentFragment();
+      if (view === "open") {
+        if (!open.length) frag.append(empty("やることはありません", "上の欄に入力して「追加」を押すと、ここに並びます。"));
+        const tm = addDays(t, 1);
+        const groups = [["期限切れ", (x) => x.due && x.due < t, true], ["今日", (x) => x.due === t], ["明日", (x) => x.due === tm], ["これから", (x) => x.due && x.due > tm], ["期限なし", (x) => !x.due]];
+        const sorted = open.slice().sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || a.created - b.created);
+        for (const [label, fn, late] of groups) {
+          const items = sorted.filter(fn);
+          if (!items.length) continue;
+          const g = document.createElement("section"); g.className = "td-group";
+          const h = document.createElement("h3"); h.textContent = `${label}　${items.length}`; if (late) h.className = "late";
+          const ul = document.createElement("ul"); ul.className = "td-list";
+          items.forEach((x) => ul.append(row(x, t)));
+          g.append(h, ul); frag.append(g);
+        }
+      } else {
+        if (!done.length) frag.append(empty("完了したものはまだありません", "チェックを入れたやることがここに移ります。"));
+        else {
+          const ul = document.createElement("ul"); ul.className = "td-list";
+          done.slice().sort((a, b) => b.doneAt - a.doneAt).forEach((x) => ul.append(row(x, t)));
+          frag.append(ul);
+        }
+      }
+      list.replaceChildren(frag);
+    }
+    function row(x, t) {
+      const li = document.createElement("li");
+      const late = !x.done && x.due && x.due < t;
+      li.className = "td-item" + (x.done ? " done" : "") + (late ? " late" : "");
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "td-check"; cb.checked = !!x.done;
+      cb.setAttribute("aria-label", `${x.text} を${x.done ? "未完了に戻す" : "完了にする"}`);
+      cb.addEventListener("change", () => tstore.update(x.id, { done: cb.checked, doneAt: cb.checked ? Date.now() : 0 }));
+      const tx = document.createElement("span"); tx.className = "td-text"; tx.textContent = x.text;
+      const du = document.createElement("span"); du.className = "td-due"; du.textContent = fmtDue(x.due);
+      const del = document.createElement("button"); del.type = "button"; del.className = "td-del"; del.textContent = "×";
+      del.setAttribute("aria-label", `${x.text} を削除`);
+      del.addEventListener("click", async () => {
+        lastDeleted = { ...x };
+        await tstore.remove(x.id);
+        showToast(`「${x.text.length > 14 ? x.text.slice(0, 14) + "…" : x.text}」を削除しました`);
+      });
+      li.append(cb, tx, du, del);
+      return li;
+    }
+    function showToast(msg) {
+      $("tdToastMsg").textContent = msg; $("tdToast").hidden = false;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { $("tdToast").hidden = true; lastDeleted = null; }, 5000);
+    }
+    $("tdUndo").addEventListener("click", async () => {
+      if (!lastDeleted) return;
+      const { id, ...rest } = lastDeleted;
+      lastDeleted = null; $("tdToast").hidden = true;
+      await tstore.restore(id, rest);
+    });
+
+    function useRemote(db) {
+      const col = db.collection("todos");
+      const fail = (e) => { $("tdNote").textContent = e && e.code === "quota_exceeded" ? "保存できる件数の上限です。完了したものを削除してください。" : "保存できませんでした。もう一度お試しください。"; };
+      tstore = {
+        add: (d) => col.add(d).catch(fail),
+        update: (id, p) => col.doc(id).update(p).catch(fail),
+        remove: (id) => col.doc(id).delete().catch(fail),
+        restore: (id, d) => col.doc(id).set(d).catch(fail),
+      };
+      col.onSnapshot(
+        (s) => { tasks = s.docs.map((d) => ({ id: d.id, ...d.data() })); render(); },
+        () => { $("tdNote").textContent = "保存先との接続が切れました。ページを開き直してください。"; }
+      );
+      $("tdNote").textContent = "やることはアカウントに保存され、ほかの端末からも見られます。";
+      $("tdAddBtn").disabled = !$("tdText").value.trim();
+    }
+    // Firebase：書いた内容はすぐ一覧に出て、サーバーへは後ろで送る（オフラインでも使える）
+    function useFirebase(fb, db, uid) {
+      const col = fb.collection(db, "users", uid, "todos");
+      const go = (fn) => { try { sync.track(fn()); } catch (e) { sync.fail(e); } };
+      tstore = {
+        add: (d) => go(() => fb.addDoc(col, d)),
+        update: (id, p) => go(() => fb.updateDoc(fb.doc(col, id), p)),
+        remove: (id) => go(() => fb.deleteDoc(fb.doc(col, id))),
+        restore: (id, d) => go(() => fb.setDoc(fb.doc(col, id), d)),
+      };
+      fb.onSnapshot(col, (s) => { tasks = s.docs.map((d) => ({ id: d.id, ...d.data() })); render(); }, (e) => sync.fail(e));
+      $("tdAddBtn").disabled = !$("tdText").value.trim();
+    }
+    function useLocal() {
+      const KEY = DEMO ? "vcal.demo.todos" : "vcal.todos";
+      try { tasks = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (_) { tasks = []; }
+      const save = () => { try { localStorage.setItem(KEY, JSON.stringify(tasks)); } catch (_) {} render(); };
+      const mk = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      tstore = {
+        add: async (d) => { tasks.push({ id: mk(), ...d }); save(); },
+        update: async (id, p) => { const t = tasks.find((t) => t.id === id); if (t) Object.assign(t, p); save(); },
+        remove: async (id) => { tasks = tasks.filter((t) => t.id !== id); save(); },
+        restore: async (id, d) => { tasks.push({ id, ...d }); save(); },
+      };
+      $("tdNote").textContent = "やることはこの端末のブラウザに保存されます。";
+      $("tdAddBtn").disabled = !$("tdText").value.trim();
+      render();
+    }
+    render();
+    return { render, useRemote, useLocal, useFirebase };
+  })();
+
+  // ---------- 画面の切り替え ----------
+  const TAB_KEY = "vcal.tab";
+  const calEls = [document.querySelector(".monthnav"), daysEl, $("status")];
+  function showTab(tab) {
+    const todo = tab === "todo";
+    document.body.classList.toggle("is-todo", todo);
+    $("tabCal").setAttribute("aria-selected", String(!todo));
+    $("tabTodo").setAttribute("aria-selected", String(todo));
+    calEls.forEach((el) => { el.hidden = todo; });
+    $("todoView").hidden = !todo;
+    $("appTitle").textContent = todo ? "やること" : "縦型カレンダー&簡単メモ";
+    if (todo) td.render(); else $("tdToast").hidden = true;
+    try { localStorage.setItem(TAB_KEY, tab); } catch (_) {}
+    window.scrollTo(0, 0);
+    if (!todo) scrollToToday();
+  }
+  $("tabCal").addEventListener("click", () => showTab("cal"));
+  $("tabTodo").addEventListener("click", () => showTab("todo"));
+  try { if (localStorage.getItem(TAB_KEY) === "todo") showTab("todo"); } catch (_) {}
+
+  // ---------- 起動 ----------
+  // 見本の予定：開いた日を基準に、先月・今月・来月に入れる（いつ開いても今月に予定が並ぶ）
+  function demoSample() {
+    const months = {};
+    const put = (off, day) => {
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + off);
+      const mk = monthKey(d.getFullYear(), d.getMonth() + 1);
+      (months[mk] = months[mk] || { days: {} }).days[pad(d.getDate())] = { link: "", photos: [], ...day };
+    };
+    put(-15, { memo: "買い物（日用品）" });
+    put(-9, { memo: "映画を見に行く", color: "yellow" });
+    put(-4, { memo: "ジム 19:00", color: "green" });
+    put(-1, { memo: "部屋のそうじ" });
+    put(0, { memo: "10:00 チームの打ち合わせ", color: "blue", place: "本社 3階 会議室",
+      items: [{ t: "資料", done: true }, { t: "ノートPC", done: false }, { t: "充電器", done: false }],
+      note: "話すこと\n・来月の予定\n・新しい画面のデザイン" });
+    put(2, { memo: "歯医者 15:30", color: "red", place: "駅前歯科クリニック" });
+    put(4, { memo: "友だちとランチ", place: "渋谷", link: "https://example.com/" });
+    put(7, { memo: "美容院 11:00" });
+    put(10, { memo: "レポートの締め切り", color: "red", note: "第3章まで書く。参考文献の一覧も忘れずに。" });
+    put(13, { memo: "旅行の準備", items: [{ t: "着替え", done: false }, { t: "チケット", done: false }] });
+    put(14, { memo: "旅行（温泉）1日目", color: "yellow", place: "箱根" });
+    put(15, { memo: "旅行（温泉）2日目", color: "yellow" });
+    put(21, { memo: "ジム 19:00", color: "green" });
+    put(27, { memo: "家族の誕生日", color: "blue" });
+    const ymd = (off) => { const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + off); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+    const now = Date.now();
+    const todos = [
+      { id: "demo1", text: "牛乳を買う", done: false, due: ymd(0), created: now - 4e5, doneAt: 0 },
+      { id: "demo2", text: "旅館を予約する", done: false, due: ymd(3), created: now - 3e5, doneAt: 0 },
+      { id: "demo3", text: "本を返す", done: false, due: "", created: now - 2e5, doneAt: 0 },
+      { id: "demo4", text: "電気代を払う", done: true, due: ymd(-2), created: now - 1e5, doneAt: now - 5e4 },
+    ];
+    return { months, todos };
+  }
+  async function demoFill(db) {
+    const { months, todos } = demoSample();
+    await idbDo(db, "months", "readwrite", (s) => { s.clear(); for (const [mk, doc] of Object.entries(months)) s.put(doc, mk); });
+    await idbDo(db, "photos", "readwrite", (s) => s.clear());
+    try { localStorage.setItem("vcal.demo.todos", JSON.stringify(todos)); localStorage.setItem("vcal.demo.filled", "1"); } catch (_) {}
+  }
+
+  render();
+  (async () => {
+    if (DEMO) {
+      $("mDemo").hidden = false;
+      let ldb = null;
+      try {
+        ldb = await idb();
+        let filled = false;
+        try { filled = localStorage.getItem("vcal.demo.filled") === "1"; } catch (_) {}
+        if (!filled) await demoFill(ldb);
+      } catch (_) { ldb = null; }
+      $("mDemoReset").addEventListener("click", async () => {
+        menu.hidden = true;
+        try { await demoFill(ldb || await idb()); } catch (_) {}
+        location.reload();
+      });
+      if (ldb) store = makeLocalStore(ldb);
+      td.useLocal();
+      setStatus(ldb ? "デモです。予定はすべて見本で、変更はこのブラウザの中だけに保存されます。" : "このブラウザでは保存できません。");
+      $("tdNote").textContent = "デモです。やることは見本で、このブラウザの中だけに保存されます。";
+      $("mNote").textContent = "保存先: デモ（このブラウザだけ）";
+      openMonth(cy, cm, true);
+      return;
+    }
+    let db = null, assets = null;
+    try {
+      if (window.claude && typeof window.claude.use === "function") {
+        [db, assets] = await Promise.all([window.claude.use("db"), window.claude.use("assets")]);
+      }
+    } catch (_) { db = null; }
+    if (!db) {
+      const setup = await firebaseSetup().catch(() => null);
+      if (setup) {
+        startFirebase(setup).catch(() => { setStatus("Firebaseに接続できませんでした。インターネットにつないで、ページを開き直してください。"); });
+        return;
+      }
+    }
+    if (db) {
+      store = makeRemoteStore(db, assets);
+      td.useRemote(db);
+      setStatus(assets ? "メモと写真はアカウントに保存され、ほかの端末からも見られます。" : "メモはアカウントに保存されます。写真の追加はこのページの編集者のみ可能です。");
+      $("mNote").textContent = "保存先: Claudeアカウント（iPhone・PCで共通）";
+    } else {
+      try {
+        store = makeLocalStore(await idb());
+        td.useLocal();
+        setStatus("メモと写真はこの端末のブラウザに保存されます。");
+        $("mNote").textContent = "保存先: この端末のブラウザ";
+      } catch (_) {
+        td.useLocal();
+        setStatus("このブラウザでは保存できません。");
+        $("mNote").textContent = "保存できません";
+      }
+    }
+    openMonth(cy, cm, true);
+  })();
+
+  // ---------- Firebase：ログイン・ログアウト・データの取り込み ----------
+  async function startFirebase(setup) {
+    const fb = await import(FB_SDK);
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+    const app = fb.initializeApp(setup.config);
+    const auth = fb.getAuth(app);
+    const db = fb.initializeFirestore(app, { localCache: fb.persistentLocalCache({ tabManager: fb.persistentMultipleTabManager() }) });
+    const storage = fb.getStorage(app);
+    storage.maxUploadRetryTime = 30000;
+    const emu = setup.emulators;
+    if (emu) {
+      fb.connectAuthEmulator(auth, `http://${emu.host}:${emu.auth}`, { disableWarnings: true });
+      fb.connectFirestoreEmulator(db, emu.host, emu.firestore);
+      fb.connectStorageEmulator(storage, emu.host, emu.storage);
+    }
+
+    const loginErr = (t) => { $("loginErr").textContent = t; $("loginErr").hidden = !t; };
+    const authMsg = (e) => {
+      const c = e && e.code || "";
+      if (c === "auth/network-request-failed") return "通信できませんでした。インターネットにつないでもう一度お試しください。";
+      if (c === "auth/unauthorized-domain") return "このアドレスではログインできません（Firebaseの「承認済みドメイン」の設定が必要です）。";
+      if (c === "auth/operation-not-allowed") return "Googleログインがオンになっていません（Firebaseの Authentication の設定が必要です）。";
+      return "ログインできませんでした。もう一度お試しください。" + (c ? `（${c}）` : "");
+    };
+    const provider = new fb.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: "select_account" });
+    $("loginBtn").addEventListener("click", async () => {
+      if (!navigator.onLine) { loginErr("ログインするにはインターネットに接続してください。"); return; }
+      loginErr(""); $("loginBtn").disabled = true;
+      try { await fb.signInWithRedirect(auth, provider); }
+      catch (e) { $("loginBtn").disabled = false; loginErr(authMsg(e)); }
+    });
+    fb.getRedirectResult(auth).catch((e) => loginErr(authMsg(e)));
+
+    let uid = null;
+    fb.onAuthStateChanged(auth, (user) => {
+      // 別のアカウントに変わったら、前の人の表示を残さないよう読み込み直す
+      if (uid && (!user || user.uid !== uid)) { location.reload(); return; }
+      if (!user) {
+        $("login").hidden = false; $("loginBtn").disabled = false;
+        setStatus(""); $("mNote").textContent = "保存先: Firebase（ログインしていません）";
+        return;
+      }
+      if (uid) return;
+      uid = user.uid;
+      $("login").hidden = true;
+      store = makeFirebaseStore(fb, db, storage, uid);
+      td.useFirebase(fb, db, uid);
+      sync.setBase("メモと写真はFirebaseに保存され、iPhoneとパソコンで同じ内容を見られます。", "やることはFirebaseに保存され、iPhoneとパソコンで同じ内容を見られます。");
+      // 前回送りきれなかった変更が届くまでは「送信待ち」として数える
+      sync.track(fb.waitForPendingWrites(db));
+      $("mUser").textContent = (user.email || user.displayName || "Googleアカウント") + " でログイン中";
+      $("mAcct").hidden = false;
+      $("mNote").textContent = "保存先: Firebase（iPhone・PCで共通）";
+      openMonth(cy, cm, true);
+    });
+
+    // ログアウト：この端末の控えも消す。送れていない変更があるときやオフラインのときは、もう一度押してもらう
+    let logoutArmed = false;
+    $("menuBtn").addEventListener("click", () => { logoutArmed = false; $("mLogout").textContent = "ログアウト"; $("mLogout").classList.remove("armed"); });
+    $("mLogout").addEventListener("click", async () => {
+      const warn = sync.pending() ? "まだ送っていない変更が消えます。もう一度押すとログアウト"
+        : !navigator.onLine ? "オフラインの間はログインし直せません。もう一度押すとログアウト" : "";
+      if (warn && !logoutArmed) { logoutArmed = true; $("mLogout").textContent = warn; $("mLogout").classList.add("armed"); return; }
+      $("mLogout").disabled = true;
+      const was = uid; uid = null;
+      try { await fb.signOut(auth); } catch (_) {}
+      try { await fb.terminate(db); await fb.clearIndexedDbPersistence(db); } catch (_) {}
+      try { localStorage.removeItem("vcal.photoUrls." + was); } catch (_) {}
+      location.reload();
+    });
+
+    // データの取り込み：書き出したファイル（{app:"vcal", months, todos, photos}）を、今のデータに足す。
+    // 同じ日はファイルの内容で上書きし、ほかの日はそのまま。同じファイルを何度取り込んでも重複しない
+    $("mImport").addEventListener("click", () => { menu.hidden = true; $("importFile").click(); });
+    $("importFile").addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!file || !uid) return;
+      showTab("cal");
+      let data = null;
+      try { data = JSON.parse(await file.text()); } catch (_) {}
+      if (!data || data.app !== "vcal") { setStatus("取り込めませんでした。このアプリのデータのファイルを選んでください。"); return; }
+      if (!navigator.onLine) { setStatus("データの取り込みは、インターネットにつながっているときに行ってください。"); return; }
+      const okId = (id) => typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id);
+      let nDays = 0, nTodos = 0, nPhotos = 0;
+      setStatus("取り込み中…");
+      try {
+        for (const [id, dataUrl] of Object.entries(data.photos || {})) {
+          if (!okId(id) || typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) continue;
+          const blob = await (await fetch(dataUrl)).blob();
+          await fb.uploadBytes(fb.ref(storage, `users/${uid}/photos/${id}`), blob, { contentType: blob.type || "image/jpeg", cacheControl: "private, max-age=31536000" });
+          nPhotos++;
+        }
+        const writes = [];
+        for (const [mk, m] of Object.entries(data.months || {})) {
+          if (!/^\d{4}-\d{2}$/.test(mk) || !m || !m.days || typeof m.days !== "object") continue;
+          const keys = Object.keys(m.days).filter((k) => /^\d{2}$/.test(k) && m.days[k] && typeof m.days[k] === "object");
+          if (!keys.length) continue;
+          writes.push(fb.setDoc(fb.doc(db, "users", uid, "months", mk),
+            { days: Object.fromEntries(keys.map((k) => [k, m.days[k]])) },
+            { mergeFields: keys.map((k) => new fb.FieldPath("days", k)) }));
+          nDays += keys.length;
+        }
+        for (const t of Array.isArray(data.todos) ? data.todos : []) {
+          if (!t || typeof t.text !== "string") continue;
+          const { id, ...rest } = t;
+          writes.push(okId(id) ? fb.setDoc(fb.doc(db, "users", uid, "todos", id), rest) : fb.addDoc(fb.collection(db, "users", uid, "todos"), rest));
+          nTodos++;
+        }
+        await Promise.all(writes);
+        setStatus(`取り込みました（予定 ${nDays}日分・やること ${nTodos}件` + (nPhotos ? `・写真 ${nPhotos}枚` : "") + "）。");
+      } catch (err) {
+        setStatus("取り込みの途中で失敗しました。もう一度お試しください（同じファイルを何度取り込んでも重複しません）。");
+      }
+    });
+  }
+})();
+</script>
+
+</body>
+</html>
